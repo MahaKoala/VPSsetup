@@ -33,10 +33,10 @@ esac
 # ------------------------------------------------------------------------------
 # Defaults (override via env vars)
 # ------------------------------------------------------------------------------
-: "${VPS_USER:=}"
+: "${VPS_USER:=maha}"
 : "${VPS_HOSTNAME:=}"
-: "${VPS_HOSTNAME_PREFIX:=vps}"
-: "${VPS_ROLE:=staging}"
+: "${VPS_HOSTNAME_PREFIX:=deployeddigital}"
+: "${VPS_ROLE:=dev}"
 
 : "${SSH_ID:=}"
 : "${SSH_GH_USER:=}"
@@ -125,7 +125,7 @@ if (( INTERACTIVE )); then
     echo "Press Enter to accept defaults. Ctrl-C to abort."
 
     hdr "Identity"
-    ask  "Primary username"                    VPS_USER            "${VPS_USER:-pink}"
+    ask  "Primary username"                    VPS_USER            "${VPS_USER:-maha}"
     ask  "Role (staging / production / dev)"   VPS_ROLE            "${VPS_ROLE}"
     ask  "Hostname (blank = auto-generate)"    VPS_HOSTNAME        "${VPS_HOSTNAME}"
     [[ -z "$VPS_HOSTNAME" ]] && \

@@ -10,8 +10,8 @@ write_files:
     content: |
       VPS_USER="pink"
       VPS_HOSTNAME=""
-      VPS_HOSTNAME_PREFIX="koala"
-      VPS_ROLE="staging"
+      VPS_HOSTNAME_PREFIX="deployeddigital"
+      VPS_ROLE="dev"
 
       SSH_ID="mahakoala"
       SSH_GH_USER=""
@@ -37,7 +37,7 @@ write_files:
 
       INSTALL_TAILSCALE="1"
       TAILSCALE_AUTHKEY="tskey-auth-REPLACE_ME"
-      TAILSCALE_TAGS="tag:vps,tag:staging"
+      TAILSCALE_TAGS="tag:vps,tag:staging,tag:dev,tag:deployeddigital"
       TAILSCALE_SSH="1"
       TAILSCALE_EXTRA_ARGS="--accept-routes"
 
