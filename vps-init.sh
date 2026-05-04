@@ -4,15 +4,18 @@
 # OVH, RackNerd, Scaleway, etc.) with or without cloud-init.
 #
 # Usage:
-#   scp vps-init.sh root@HOST:/root/
-#   ssh root@HOST 'bash /root/vps-init.sh'
+#   # one-liner from a fresh root SSH session (recommended):
+#   bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)
 #
-#   # or piped:
-#   ssh root@HOST 'bash -s' < vps-init.sh
+#   # also works (prompts read from /dev/tty):
+#   curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh | bash
 #
-#   # or non-interactive (for agents / automation):
-#   VPS_USER=pink SSH_ID=mahakoala TAILSCALE_AUTHKEY=tskey-... \
-#     NONINTERACTIVE=1 bash vps-init.sh
+#   # or scp + run:
+#   scp vps-init.sh root@HOST:/root/ && ssh root@HOST 'bash /root/vps-init.sh'
+#
+#   # non-interactive (for agents / automation):
+#   VPS_USER=pink SSH_ID=mahakoala TAILSCALE_AUTHKEY=tskey-... NONINTERACTIVE=1 \
+#     bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)
 #
 # Idempotent. Safe to re-run.
 
@@ -43,7 +46,7 @@ esac
 : "${SSH_AUTHORIZED_KEYS:=}"
 
 : "${INSTALL_BREW:=1}"
-: "${BREW_PACKAGES:=starship eza tldr zoxide btop fd ripgw bat git-delta lazygit glow ranger jq yq fzf gh node bun pnpm yarn go}"
+: "${BREW_PACKAGES:=starship eza tldr zoxide btop fd ripgrep bat git-delta lazygit glow ranger jq yq fzf gh node bun pnpm yarn go}"
 : "${INSTALL_NODE_LTS:=0}"
 : "${INSTALL_DOCKER:=0}"
 : "${ENABLE_PASSWORDLESS_SUDO:=1}"
@@ -74,8 +77,10 @@ esac
 : "${NONINTERACTIVE:=}"
 : "${RUN_HARDEN:=1}"
 
-# Interactive if: we have a TTY AND user hasn't forced non-interactive
-if [[ -z "$NONINTERACTIVE" && -t 0 && -t 1 ]]; then
+# Interactive if: a controlling terminal is reachable (works for `bash script`,
+# `bash <(curl ...)`, AND `curl ... | bash` since prompts read from /dev/tty)
+# unless the user explicitly forced non-interactive.
+if [[ -z "$NONINTERACTIVE" ]] && [[ -r /dev/tty && -w /dev/tty ]]; then
     INTERACTIVE=1
 else
     INTERACTIVE=0
@@ -349,10 +354,10 @@ if [[ "${INSTALL_BREW:-1}" == "1" ]]; then
     if [[ ! -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
         mkdir -p /home/linuxbrew/.linuxbrew
         chown -R "$VPS_USER:$VPS_USER" /home/linuxbrew
-        sudo -Hiu "$VPS_USER" bash -lc '
-          cd "$HOME"
-          NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        '
+        # Pipe installer to bash via stdin — avoids login-shell profile sourcing
+        # and nested-quoting issues that bit us with `sudo -Hiu ... bash -lc`.
+        curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh \
+          | sudo -Hu "$VPS_USER" env NONINTERACTIVE=1 bash
     fi
     cat > /etc/profile.d/homebrew.sh <<'PROFILE'
 if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
@@ -364,35 +369,35 @@ PROFILE
     for rc in "${USER_HOME}/.profile" "${USER_HOME}/.bashrc"; do
         append_missing "$rc" "$BL" "$VPS_USER" "$VPS_USER"
     done
-    sudo -Hiu "$VPS_USER" bash -lc '
-      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-      brew analytics off || true
-      brew update || true
-    '
+    sudo -Hu "$VPS_USER" bash -s <<'INNER_EOF'
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+brew analytics off || true
+brew update || true
+INNER_EOF
     if [[ -n "${BREW_PACKAGES// }" ]]; then
-        sudo -Hiu "$VPS_USER" env BREW_PACKAGES="$BREW_PACKAGES" bash -lc '
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-          for pkg in $BREW_PACKAGES; do
-            if brew list --formula "$pkg" >/dev/null 2>&1; then
-              echo "ok: $pkg"
-            else
-              brew install "$pkg" || echo "WARN: failed $pkg"
-            fi
-          done
-        '
+        sudo -Hu "$VPS_USER" env BREW_PACKAGES="$BREW_PACKAGES" bash -s <<'INNER_EOF'
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+for pkg in $BREW_PACKAGES; do
+    if brew list --formula "$pkg" >/dev/null 2>&1; then
+        echo "ok: $pkg"
+    else
+        brew install "$pkg" || echo "WARN: failed $pkg"
+    fi
+done
+INNER_EOF
     fi
 fi
 
 # 6. Optional: Node via nvm
 if [[ "${INSTALL_NODE_LTS:-0}" == "1" ]]; then
-    sudo -Hiu "$VPS_USER" bash -lc '
-      export NVM_DIR="$HOME/.nvm"
-      [ -s "$NVM_DIR/nvm.sh" ] || curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-      . "$NVM_DIR/nvm.sh"
-      nvm install --lts
-      nvm alias default "lts/*"
-      corepack enable || true
-    '
+    sudo -Hu "$VPS_USER" bash -s <<'INNER_EOF'
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] || curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+. "$NVM_DIR/nvm.sh"
+nvm install --lts
+nvm alias default "lts/*"
+corepack enable || true
+INNER_EOF
 fi
 
 # 7. Optional: Docker
