@@ -192,6 +192,148 @@ Layout:
 
 ---
 
+## Quickstart: Fresh VPS as root
+
+Operator guide for a brand-new Ubuntu 24.04 VPS where you can SSH in as `root` (the default state on Hetzner, DigitalOcean, Vultr, Linode, Contabo, OVH, RackNerd, Scaleway, etc.).
+
+### Before you begin
+
+You will want these in hand:
+
+- `<server-ip>` — IPv4 of the VPS (or DNS name)
+- `root` SSH access — the temporary password the provider gave you, or a pre-installed root key
+- An SSH key source for your real user, one or more of:
+  - `sshid.io` ID (e.g. `mahakoala`) — keys fetched from `https://sshid.io/<id>`
+  - GitHub username — keys fetched from `https://github.com/<u>.keys`
+  - Raw `authorized_keys` content
+- A Tailscale auth key *(strongly recommended)* — generate at [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys). Make it **ephemeral**, **tagged** (e.g. `tag:vps`), and short-lived (1 hour is plenty)
+
+### Path A — One-liner (recommended)
+
+The `vps-init.sh` script is self-contained: it writes the config file and both worker scripts, runs them, and leaves everything on disk for re-runs.
+
+**From your laptop, in one shot (interactive wizard):**
+
+```bash
+ssh -t root@<server-ip> "bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)"
+```
+
+The `-t` is important — it allocates a TTY so the wizard's prompts work over the SSH session. The wizard asks for username, SSH key sources, Tailscale key, and hardening choices, then prints a review screen before changing anything.
+
+**Already SSH'd in as root?**
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)
+```
+
+**Non-interactive (CI / agents / scripted fleet):**
+
+```bash
+ssh root@<server-ip> "curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh | \
+  VPS_USER=pink \
+  SSH_ID=mahakoala \
+  VPS_ROLE=staging \
+  TAILSCALE_AUTHKEY=tskey-auth-xxxxxxxxxxxx \
+  TAILSCALE_TAGS=tag:vps,tag:staging \
+  NONINTERACTIVE=1 bash"
+```
+
+All [bootstrap.env](bootstrap.env) variables can be passed this way. Anything you don't set falls back to the defaults baked into `vps-init.sh`.
+
+### Path B — Manual / split files
+
+If you'd rather see and edit each file before running, or if `bash <(curl …)` is blocked by your environment:
+
+```bash
+# 1. Pull the files (run as root on the VPS)
+mkdir -p /etc/vps /usr/local/sbin
+BASE=https://raw.githubusercontent.com/MahaKoala/VPSsetup/main
+curl -fsSL $BASE/bootstrap.env    -o /etc/vps/bootstrap.env
+curl -fsSL $BASE/vps-bootstrap.sh -o /usr/local/sbin/vps-bootstrap.sh
+curl -fsSL $BASE/vps-harden.sh    -o /usr/local/sbin/vps-harden.sh
+curl -fsSL $BASE/vps-tools.sh     -o /usr/local/sbin/vps-tools.sh   # optional
+chmod 600 /etc/vps/bootstrap.env
+chmod +x /usr/local/sbin/vps-bootstrap.sh /usr/local/sbin/vps-harden.sh /usr/local/sbin/vps-tools.sh
+
+# 2. Edit the config — at minimum fill VPS_USER, SSH_ID/SSH_GH_USER, TAILSCALE_AUTHKEY
+nano /etc/vps/bootstrap.env
+
+# 3. Run, in order
+/usr/local/sbin/vps-bootstrap.sh   # user, hostname, SSH keys, Homebrew, base tooling
+/usr/local/sbin/vps-harden.sh      # SSH lockdown, UFW, fail2ban, sysctl, Tailscale
+/usr/local/sbin/vps-tools.sh       # optional: AI/agent tooling (opencode, crush, codex, claude-code, ollama)
+```
+
+`firstrun.sh` is the same flow as a single copy-pasteable script — handy if your VPS console has no easy way to paste a multi-line block.
+
+### Path C — Cloud-init providers (Hetzner / DO / Vultr / Linode)
+
+Paste the contents of [cloud-init.yaml](cloud-init.yaml) into the provider's **User Data** / **Cloud Config** field at server creation time. Everything happens on first boot before you ever SSH in. Edit the inline `bootstrap.env` block in the YAML to set your `VPS_USER`, `SSH_ID`, `TAILSCALE_AUTHKEY`, etc.
+
+### Verify the result
+
+```bash
+# As root or your new user:
+bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/VerifyChecklist.sh)
+```
+
+This prints hostname/OS, effective `sshd` config, per-user `authorized_keys` counts, UFW rules, fail2ban status, unattended-upgrades, Tailscale status, Homebrew sanity, and listening ports — one consolidated audit you can read top-to-bottom.
+
+You should see, among other things:
+
+- `Status: active` from UFW
+- A `tailscale0` interface in `tailnet ALLOW Anywhere` rules
+- `tailscale status` showing your tailnet peers
+- `PermitRootLogin prohibit-password` (root SSH allowed by key only — recovery hatch)
+- `AllowUsers <your-user> root` in `sshd -T`
+
+### Connect with your real user
+
+```bash
+# Public (still allowed on first run):
+ssh <your-user>@<server-ip>
+
+# Tailnet (preferred — works even if public SSH is later locked down):
+ssh <your-user>@<tailscale-hostname>
+```
+
+The host's tailnet hostname follows the pattern `<prefix>-<role>-<id>` (e.g. `deployeddigital-dev-abc12345`). Run `tailscale status` to see it.
+
+### Lock SSH to the tailnet (second run, optional but recommended)
+
+Once you've confirmed you can reach the VPS over Tailscale, eliminate the public SSH attack surface:
+
+```bash
+sudo sed -i 's/^PUBLIC_SSH_ALLOWED=.*/PUBLIC_SSH_ALLOWED="0"/' /etc/vps/bootstrap.env
+sudo /usr/local/sbin/vps-harden.sh
+```
+
+The harden script **refuses to run** if you set `PUBLIC_SSH_ALLOWED=0` while Tailscale isn't connected — it won't lock you out. After it succeeds, the `--- SSH access summary ---` block at the bottom shows the verified tailnet rule and confirms root key access is still available as the recovery hatch.
+
+### Re-running
+
+Every step is idempotent:
+
+```bash
+sudo nano /etc/vps/bootstrap.env       # change anything — add a brew package, add a SSH key source, etc.
+sudo /usr/local/sbin/vps-bootstrap.sh  # re-applies user/keys/brew
+sudo /usr/local/sbin/vps-harden.sh     # re-applies firewall/SSH/tailscale config
+```
+
+Logs accumulate in `/var/log/vps-bootstrap.log`.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `bash: line 1: curl: command not found` | Older minimal image; run `apt-get update && apt-get install -y curl` first |
+| `ERROR: PUBLIC_SSH_ALLOWED=0 but Tailscale is not connected` | First run with lockdown enabled — leave `PUBLIC_SSH_ALLOWED=1` until tailnet is verified |
+| `WARN: tailnet SSH rule not visible in 'ufw status'` | tailscaled didn't bring up `tailscale0`; check `journalctl -u tailscaled` and `tailscale status` |
+| `Refusing to use reserved username` | Your `VPS_USER` is `root` / `linuxbrew` / a UID < 1000 — pick a new one |
+| `WARN: brew not found at /home/linuxbrew/.linuxbrew/bin/brew` | First Homebrew install failed; re-run `vps-bootstrap.sh` after fixing the underlying network/disk issue |
+
+---
+
 
 ## Resolved Design Decisions
 
