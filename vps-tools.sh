@@ -1,59 +1,80 @@
 #!/usr/bin/env bash
 # vps-tools.sh — install AI/agent tooling for $VPS_USER
+#
+# Usage:
+#   sudo /usr/local/sbin/vps-tools.sh
+#   sudo bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-tools.sh)
+#
+# Idempotent. Safe to re-run.
+
 set -Eeuo pipefail
+
+# Root check FIRST — /etc/vps/bootstrap.env is mode 600, so a non-root run
+# would fail at `source` with "Permission denied" before we get to give a
+# friendly error.
+[[ $EUID -eq 0 ]] || { echo "Must run as root (try: sudo $0)"; exit 1; }
+
 ENV_FILE="${ENV_FILE:-/etc/vps/bootstrap.env}"
-[[ -f "$ENV_FILE" ]] || { echo "Missing $ENV_FILE"; exit 1; }
+[[ -f "$ENV_FILE" ]] || { echo "Missing $ENV_FILE — run vps-bootstrap.sh first"; exit 1; }
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 
-[[ $EUID -eq 0 ]] || { echo "Must run as root"; exit 1; }
 [[ -n "${VPS_USER:-}" ]] || { echo "VPS_USER not set in $ENV_FILE"; exit 1; }
 id -u "$VPS_USER" &>/dev/null || { echo "User $VPS_USER does not exist; run vps-bootstrap.sh first"; exit 1; }
 
-run_as_user() { sudo -Hiu "$VPS_USER" bash -lc "$*"; }
+echo "===== vps-tools @ $(date -Is) ====="
+echo "Installing AI/agent tooling for user: $VPS_USER"
 
-# Most coding agents publish brew taps; prefer brew where possible.
-# `cd "$HOME"` is required: sudo -Hu inherits the parent's CWD (/root), which
-# the unprivileged user cannot read — that's the "current working directory
-# must be readable" error from brew. -Hiu *should* cd to home, but be explicit.
-run_as_user '
-  cd "$HOME"
-  if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
+# Run the user-side install via stdin heredoc, NOT `bash -lc "$multi-line"`.
+# `bash -lc` round-trips the script through argv and collapses newlines on
+# some sudo/kernel combos, breaking compound statements. `bash -s` reads the
+# script from stdin where newlines are inviolable.
+#
+# `cd "$HOME"` first because brew refuses to run when CWD is unreadable
+# (e.g. /root after `sudo -Hu` without -i changing directory).
+sudo -Hu "$VPS_USER" bash -l -s <<'INNER_EOF'
+set +e   # don't abort the whole tools run if one upstream is flaky
+cd "$HOME"
+
+if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
     eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 
-    # Code agents (brew taps)
-    brew install sst/tap/opencode || true
-    brew install charmbracelet/tap/crush || true
+    echo "--- code agents (brew taps) ---"
+    brew install sst/tap/opencode      || echo "WARN: opencode failed"
+    brew install charmbracelet/tap/crush || echo "WARN: crush failed"
 
-    # OpenAI Codex CLI — no Linux brew formula; install via npm if node is present
+    echo "--- OpenAI Codex CLI ---"
     if command -v npm >/dev/null; then
-      npm i -g @openai/codex || true
+        npm i -g @openai/codex || echo "WARN: @openai/codex npm install failed"
     else
-      echo "WARN: npm not found; skipping @openai/codex"
+        echo "WARN: npm not found; skipping @openai/codex"
     fi
 
-    # Anthropic Claude Code — official installer (no Linux brew/cask)
-    curl -fsSL https://claude.ai/install.sh | bash || true
+    echo "--- Anthropic Claude Code ---"
+    curl -fsSL https://claude.ai/install.sh | bash || echo "WARN: claude-code install failed"
 
-    # Terminal niceties
-    brew install lazygit glow ranger zoxide btop chafa csvlens || true
-  else
+    echo "--- terminal niceties ---"
+    brew install lazygit glow ranger zoxide btop chafa csvlens || echo "WARN: some terminal tools failed"
+else
     echo "WARN: brew not found at /home/linuxbrew/.linuxbrew/bin/brew — skipping brew tools"
-  fi
+fi
 
-  # tmuxai (curl installer; no brew tap)
-  curl -fsSL https://get.tmuxai.dev | bash || true
+echo "--- tmuxai ---"
+curl -fsSL https://get.tmuxai.dev | bash || echo "WARN: tmuxai install failed"
 
-  # tmux plugin manager (per-user)
-  if [ ! -d "$HOME/.tmux/plugins/tpm" ]; then
-    git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm" || true
-  fi
-'
+echo "--- tmux plugin manager ---"
+if [ ! -d "$HOME/.tmux/plugins/tpm" ]; then
+    git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm" \
+        || echo "WARN: tpm clone failed"
+fi
+INNER_EOF
 
-# Ollama runs as a system daemon
+# Ollama runs as a system daemon, not under $VPS_USER
+echo "--- Ollama (system daemon) ---"
 if ! command -v ollama &>/dev/null; then
     curl -fsSL https://ollama.com/install.sh | sh
 fi
-systemctl enable --now ollama || true
+systemctl enable --now ollama || echo "WARN: could not enable ollama service"
 
-echo "Tools installed. Configure secrets via /etc/vps/secrets.env (see notes)."
+echo "===== vps-tools complete @ $(date -Is) ====="
+echo "Configure API keys in /etc/vps/secrets.env (mode 0600); source it from the user's .profile."

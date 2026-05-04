@@ -235,8 +235,11 @@ ssh root@<server-ip> "curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPS
   VPS_ROLE=staging \
   TAILSCALE_AUTHKEY=tskey-auth-xxxxxxxxxxxx \
   TAILSCALE_TAGS=tag:vps,tag:staging \
+  INSTALL_TOOLS=1 \
   NONINTERACTIVE=1 bash"
 ```
+
+`INSTALL_TOOLS=1` adds the AI/agent tooling step (opencode, crush, codex, claude-code, ollama, lazygit, etc.); leave it at `0` (default) for a minimal install. The interactive wizard prompts for it explicitly.
 
 All [bootstrap.env](bootstrap.env) variables can be passed this way. Anything you don't set falls back to the defaults baked into `vps-init.sh`.
 
@@ -263,6 +266,14 @@ nano /etc/vps/bootstrap.env
 /usr/local/sbin/vps-harden.sh      # SSH lockdown, UFW, fail2ban, sysctl, Tailscale
 /usr/local/sbin/vps-tools.sh       # optional: AI/agent tooling (opencode, crush, codex, claude-code, ollama)
 ```
+
+If you skipped `vps-tools.sh` and want to add AI tooling later (or refresh it), it's a stand-alone re-runnable step — pull the latest and run as root:
+
+```bash
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-tools.sh)
+```
+
+It reads the existing `/etc/vps/bootstrap.env` to find `VPS_USER` and installs everything under that user's Homebrew. **Must be run as root** — the env file is mode 600 and the script aborts with a clear error if invoked as a regular user.
 
 `firstrun.sh` is the same flow as a single copy-pasteable script — handy if your VPS console has no easy way to paste a multi-line block.
 
@@ -348,6 +359,8 @@ Logs accumulate in `/var/log/vps-bootstrap.log`.
 | `ERROR: sshd -t rejected new drop-in; rolling back` | Something invalidated `99-vps-hardening.conf` — typically a stray character in `SSH_PORT`/`PERMIT_ROOT_LOGIN`/`ALLOW_PASSWORD_AUTH`. The previous drop-in is restored automatically; fix the env file and re-run |
 | `WARN: tailnet SSH rule not visible in 'ufw status'` | tailscaled didn't bring up `tailscale0`; check `journalctl -u tailscaled` and `tailscale status` |
 | `Error: The current working directory must be readable to <user> to run brew.` | A sub-shell ran as the user from `/root` (which the user can't read). The current scripts always `cd "$HOME"` first; if you see this, you're running an old copy — re-pull `vps-bootstrap.sh` |
+| `bash: -c: line 1: syntax error near unexpected token 'then'` (running `vps-tools.sh`) | Old `bash -lc "$multi-line"` form collapsed newlines through argv. Fixed in the current script (uses `bash -l -s` heredoc-via-stdin). Re-pull `vps-tools.sh` |
+| `/etc/vps/bootstrap.env: Permission denied` | You ran `vps-tools.sh` (or another root-only script) as a regular user. Re-run with `sudo` — the env file is mode 600 and contains the Tailscale auth key on first run |
 | `Refusing to use reserved username` | Your `VPS_USER` is `root` / `linuxbrew` / a UID < 1000 — pick a new one |
 | `WARN: brew not found at /home/linuxbrew/.linuxbrew/bin/brew` | First Homebrew install failed; re-run `vps-bootstrap.sh` after fixing the underlying network/disk issue |
 

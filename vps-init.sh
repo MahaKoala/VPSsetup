@@ -74,6 +74,8 @@ esac
 : "${TAILSCALE_EXIT_NODE:=0}"
 : "${TAILSCALE_EXTRA_ARGS:=--accept-routes}"
 
+: "${INSTALL_TOOLS:=0}"
+
 : "${NONINTERACTIVE:=}"
 : "${RUN_HARDEN:=1}"
 
@@ -162,6 +164,12 @@ if (( INTERACTIVE )); then
     ask_yn "Open HTTP/HTTPS ports (80/443)?" "n" \
         && ALLOW_HTTP_HTTPS=1 || ALLOW_HTTP_HTTPS=0
 
+    hdr "AI / agent tooling (optional)"
+    echo "Installs opencode, crush, codex, claude-code, ollama, lazygit, glow,"
+    echo "ranger, zoxide, btop, chafa, csvlens, tmuxai, tpm. Adds 5–10 minutes."
+    ask_yn "Install AI/agent tooling after hardening?" "n" \
+        && INSTALL_TOOLS=1 || INSTALL_TOOLS=0
+
     hdr "Review"
     cat <<EOF
   user        : $VPS_USER
@@ -173,6 +181,7 @@ if (( INTERACTIVE )); then
   authkey set : $([[ -n "$TAILSCALE_AUTHKEY" ]] && echo yes || echo no)
   harden      : $([[ $RUN_HARDEN == 1 ]] && echo yes || echo no)
   http/https  : $([[ $ALLOW_HTTP_HTTPS == 1 ]] && echo open || echo closed)
+  ai tools    : $([[ $INSTALL_TOOLS == 1 ]] && echo yes || echo no)
 EOF
     echo
     ask_yn "Proceed?" "y" || { echo "Aborted."; exit 1; }
@@ -693,6 +702,79 @@ chmod +x /usr/local/sbin/vps-harden.sh
 echo "Wrote /usr/local/sbin/vps-harden.sh"
 
 # ------------------------------------------------------------------------------
+# Write vps-tools.sh  (AI / agent tooling — opt-in via INSTALL_TOOLS=1)
+# ------------------------------------------------------------------------------
+cat > /usr/local/sbin/vps-tools.sh <<'TOOLS_EOF'
+#!/usr/bin/env bash
+# vps-tools.sh — install AI/agent tooling for $VPS_USER. Idempotent.
+set -Eeuo pipefail
+
+[[ $EUID -eq 0 ]] || { echo "Must run as root (try: sudo $0)"; exit 1; }
+
+ENV_FILE="${ENV_FILE:-/etc/vps/bootstrap.env}"
+[[ -f "$ENV_FILE" ]] || { echo "Missing $ENV_FILE — run vps-bootstrap.sh first"; exit 1; }
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+
+[[ -n "${VPS_USER:-}" ]] || { echo "VPS_USER not set in $ENV_FILE"; exit 1; }
+id -u "$VPS_USER" &>/dev/null || { echo "User $VPS_USER does not exist"; exit 1; }
+
+echo "===== vps-tools @ $(date -Is) ====="
+echo "Installing AI/agent tooling for: $VPS_USER"
+
+# Heredoc-via-stdin (NOT `bash -lc "$multi-line"`): some sudo/kernel combos
+# collapse newlines through argv, breaking compound statements. Stdin keeps
+# them intact. cd "$HOME" because brew refuses to start in an unreadable cwd.
+sudo -Hu "$VPS_USER" bash -l -s <<'INNER_EOF'
+set +e
+cd "$HOME"
+
+if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
+    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
+
+    echo "--- code agents (brew taps) ---"
+    brew install sst/tap/opencode      || echo "WARN: opencode failed"
+    brew install charmbracelet/tap/crush || echo "WARN: crush failed"
+
+    echo "--- OpenAI Codex CLI ---"
+    if command -v npm >/dev/null; then
+        npm i -g @openai/codex || echo "WARN: @openai/codex npm install failed"
+    else
+        echo "WARN: npm not found; skipping @openai/codex"
+    fi
+
+    echo "--- Anthropic Claude Code ---"
+    curl -fsSL https://claude.ai/install.sh | bash || echo "WARN: claude-code install failed"
+
+    echo "--- terminal niceties ---"
+    brew install lazygit glow ranger zoxide btop chafa csvlens || echo "WARN: some terminal tools failed"
+else
+    echo "WARN: brew not found at /home/linuxbrew/.linuxbrew/bin/brew — skipping brew tools"
+fi
+
+echo "--- tmuxai ---"
+curl -fsSL https://get.tmuxai.dev | bash || echo "WARN: tmuxai install failed"
+
+echo "--- tmux plugin manager ---"
+[ -d "$HOME/.tmux/plugins/tpm" ] || \
+    git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm" || \
+    echo "WARN: tpm clone failed"
+INNER_EOF
+
+# Ollama runs as a system daemon, not under $VPS_USER
+echo "--- Ollama (system daemon) ---"
+if ! command -v ollama &>/dev/null; then
+    curl -fsSL https://ollama.com/install.sh | sh
+fi
+systemctl enable --now ollama || echo "WARN: could not enable ollama service"
+
+echo "===== vps-tools done @ $(date -Is) ====="
+echo "API keys: drop them in /etc/vps/secrets.env (mode 0600), source from .profile."
+TOOLS_EOF
+chmod +x /usr/local/sbin/vps-tools.sh
+echo "Wrote /usr/local/sbin/vps-tools.sh"
+
+# ------------------------------------------------------------------------------
 # Run
 # ------------------------------------------------------------------------------
 echo
@@ -703,6 +785,12 @@ if [[ "${RUN_HARDEN}" == "1" ]]; then
     echo
     echo "$(c '1;32' '▶ Running vps-harden.sh')"
     /usr/local/sbin/vps-harden.sh
+fi
+
+if [[ "${INSTALL_TOOLS}" == "1" ]]; then
+    echo
+    echo "$(c '1;32' '▶ Running vps-tools.sh')"
+    /usr/local/sbin/vps-tools.sh
 fi
 
 echo
@@ -722,6 +810,7 @@ echo
 echo "Re-run later:"
 echo "  sudo /usr/local/sbin/vps-bootstrap.sh   # re-apply user/keys/brew"
 echo "  sudo /usr/local/sbin/vps-harden.sh      # re-apply firewall/ssh/tailscale"
+echo "  sudo /usr/local/sbin/vps-tools.sh       # install/refresh AI/agent tooling"
 echo
 if [[ "${PUBLIC_SSH_ALLOWED}" == "1" && "${INSTALL_TAILSCALE}" == "1" ]]; then
     echo "$(c '1;33' 'To lock SSH to Tailscale-only after verifying tailnet access:')"
