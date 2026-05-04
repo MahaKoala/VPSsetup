@@ -206,7 +206,7 @@ You will want these in hand:
   - `sshid.io` ID (e.g. `mahakoala`) — keys fetched from `https://sshid.io/<id>`
   - GitHub username — keys fetched from `https://github.com/<u>.keys`
   - Raw `authorized_keys` content
-- A Tailscale auth key *(strongly recommended)* — generate at [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys). Make it **ephemeral**, **tagged** (e.g. `tag:vps`), and short-lived (1 hour is plenty)
+- A Tailscale auth key *(strongly recommended)* — generate at [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys). Make it **ephemeral**, **tagged** (e.g. `tag:vps`), and short-lived (1 hour is plenty). The tag(s) you choose at key generation MUST already exist in `tagOwners` in your `tailscale.json` ACL — the script's default is to use those tags as-is and *not* override them with `--advertise-tags`, which is the safe path
 
 ### Path A — One-liner (recommended)
 
@@ -358,6 +358,9 @@ Logs accumulate in `/var/log/vps-bootstrap.log`.
 | `WARN: SSH'd in as '<x>' but new AllowUsers will be: <y>` | You're running the harden script as a user who won't be allowed in after reload. **Don't log out** — open a new SSH session as `<user>` (or root) first to verify access |
 | `ERROR: sshd -t rejected new drop-in; rolling back` | Something invalidated `99-vps-hardening.conf` — typically a stray character in `SSH_PORT`/`PERMIT_ROOT_LOGIN`/`ALLOW_PASSWORD_AUTH`. The previous drop-in is restored automatically; fix the env file and re-run |
 | `WARN: tailnet SSH rule not visible in 'ufw status'` | tailscaled didn't bring up `tailscale0`; check `journalctl -u tailscaled` and `tailscale status` |
+| `ERROR: 'tailscale up' failed (exit N)` with `requested tags … are invalid or not permitted` | A tag in `TAILSCALE_TAGS` (or `--advertise-tags`) isn't in `tagOwners` in your `tailscale.json`. Either remove the tag from `TAILSCALE_TAGS` (leave blank to use the auth-key default), or add the tag to `tagOwners` and re-publish the policy in the Tailscale admin |
+| `ERROR: 'tailscale up' failed` with `auth key … exhausted` / `expired` | Auth key already used (single-use) or past its TTL. Generate a new ephemeral, tagged auth key in Tailscale admin → Settings → Keys, paste it into `TAILSCALE_AUTHKEY` in `/etc/vps/bootstrap.env`, re-run harden |
+| Tailscale joined but SSH via tailnet rejects `<user>` | Your `tailscale.json` SSH ACL `users` list doesn't include `<user>`. Add `<user>` to the `users` array, re-publish the policy |
 | `Error: The current working directory must be readable to <user> to run brew.` | A sub-shell ran as the user from `/root` (which the user can't read). The current scripts always `cd "$HOME"` first; if you see this, you're running an old copy — re-pull `vps-bootstrap.sh` |
 | `bash: -c: line 1: syntax error near unexpected token 'then'` (running `vps-tools.sh`) | Old `bash -lc "$multi-line"` form collapsed newlines through argv. Fixed in the current script (uses `bash -l -s` heredoc-via-stdin). Re-pull `vps-tools.sh` |
 | `/etc/vps/bootstrap.env: Permission denied` | You ran `vps-tools.sh` (or another root-only script) as a regular user. Re-run with `sudo` — the env file is mode 600 and contains the Tailscale auth key on first run |

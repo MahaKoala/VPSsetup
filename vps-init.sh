@@ -67,7 +67,7 @@ esac
 : "${INSTALL_TAILSCALE:=1}"
 : "${TAILSCALE_AUTHKEY:=}"
 : "${TAILSCALE_HOSTNAME:=}"
-: "${TAILSCALE_TAGS:=tag:vps}"
+: "${TAILSCALE_TAGS:=}"   # empty = use whatever tags the auth key was generated with
 : "${TAILSCALE_SSH:=1}"
 : "${TAILSCALE_ACCEPT_DNS:=false}"
 : "${TAILSCALE_ADVERTISE_ROUTES:=}"
@@ -153,7 +153,9 @@ if (( INTERACTIVE )); then
     if ask_yn "Install Tailscale?" "y"; then
         INSTALL_TAILSCALE=1
         ask_secret "Tailscale authkey (blank to install only)" TAILSCALE_AUTHKEY
-        ask "Tailscale tags (comma-separated)" TAILSCALE_TAGS "tag:vps,tag:${VPS_ROLE}"
+        echo "  (Leave tags blank to use the tags baked into the auth key —"
+        echo "   safer than overriding, since extra tags must be in tagOwners.)"
+        ask "Override tags (comma-separated, blank = key default)" TAILSCALE_TAGS ""
     else
         INSTALL_TAILSCALE=0
     fi
@@ -644,27 +646,41 @@ if bool "${INSTALL_TAILSCALE:-1}"; then
     echo "--- tailscale ---"
     command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh
     systemctl enable --now tailscaled
+    # Wait briefly for tailscaled to be ready
+    for _ in 1 2 3 4 5; do tailscale status >/dev/null 2>&1 && break; sleep 1; done
+
     if [[ -n "${TAILSCALE_AUTHKEY:-}" ]]; then
         TS_HOST="${TAILSCALE_HOSTNAME:-${VPS_HOSTNAME:-$(hostname)}}"
         args=( up
                --authkey="$TAILSCALE_AUTHKEY"
                --hostname="$TS_HOST"
                --accept-dns="${TAILSCALE_ACCEPT_DNS:-false}"
-               --operator="$VPS_USER"
-               --advertise-tags="$TAILSCALE_TAGS" )
+               --operator="$VPS_USER" )
+        # Only pass --advertise-tags if explicitly set; the auth key already
+        # carries its tag list. Mismatch (or a tag not in tagOwners) → reject.
+        [[ -n "${TAILSCALE_TAGS:-}" ]] && args+=( --advertise-tags="$TAILSCALE_TAGS" )
         bool "${TAILSCALE_SSH:-1}"       && args+=( --ssh )
         bool "${TAILSCALE_EXIT_NODE:-0}" && args+=( --advertise-exit-node )
         [[ -n "${TAILSCALE_ADVERTISE_ROUTES:-}" ]] && args+=( --advertise-routes="$TAILSCALE_ADVERTISE_ROUTES" )
         [[ -n "${TAILSCALE_EXTRA_ARGS:-}" ]]      && args+=( ${TAILSCALE_EXTRA_ARGS} )
-        if tailscale "${args[@]}"; then
-            # Scrub authkey so snapshots/images don't leak it
+
+        # Capture stderr so the operator sees the actual reason for failure.
+        ts_out="$(tailscale "${args[@]}" 2>&1)" && ts_rc=0 || ts_rc=$?
+        [[ -n "$ts_out" ]] && echo "$ts_out"
+        if (( ts_rc == 0 )); then
             sed -i -E 's|^TAILSCALE_AUTHKEY=.*|TAILSCALE_AUTHKEY=""|' "$ENV_FILE"
         else
-            echo "WARN: tailscale up failed"
+            echo
+            echo "ERROR: 'tailscale up' failed (exit $ts_rc). Common causes:"
+            echo "  - auth key expired / already used / single-use"
+            echo "  - tag in --advertise-tags not in tagOwners (tailscale.json)"
+            echo "  - auth key generated with a different tag set than requested"
+            echo "  - controlplane unreachable (firewall blocking *.tailscale.com:443)"
         fi
         tailscale status || true
     else
         echo "No TAILSCALE_AUTHKEY; tailscaled installed but not joined."
+        echo "Join manually: sudo tailscale up --auth-key=<your-key>"
     fi
 fi
 

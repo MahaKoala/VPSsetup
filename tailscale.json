@@ -1,15 +1,27 @@
+// Tailscale ACL policy for the deployeddigital tailnet.
+//
+// IMPORTANT: every tag you reference in `tailscale up --advertise-tags=…` (or
+// in an auth key's tag set) MUST appear in `tagOwners` below. A tag missing
+// from tagOwners → Tailscale rejects the auth-key request with
+// "requested tags … are invalid or not permitted".
+//
+// SSH access: `users` lists which Linux usernames the SSH ACL accepts. Add
+// every VPS_USER you intend to deploy with (root is included for emergency
+// recovery via the mirrored authorized_keys).
 {
   "tagOwners": {
-    "tag:vps":        ["autogroup:admin"],
-    "tag:staging":    ["autogroup:admin"],
-    "tag:production": ["autogroup:admin"]
+    "tag:vps":              ["autogroup:admin"],
+    "tag:dev":              ["autogroup:admin"],
+    "tag:staging":          ["autogroup:admin"],
+    "tag:production":       ["autogroup:admin"],
+    "tag:deployeddigital":  ["autogroup:admin"]
   },
   "ssh": [
     {
       "action": "accept",
       "src":    ["autogroup:admin"],
       "dst":    ["tag:vps"],
-      "users":  ["pink", "root"]
+      "users":  ["root", "maha", "pink"]
     }
   ]
 }

@@ -37,7 +37,10 @@ write_files:
 
       INSTALL_TAILSCALE="1"
       TAILSCALE_AUTHKEY="tskey-auth-REPLACE_ME"
-      TAILSCALE_TAGS="tag:vps,tag:staging,tag:dev,tag:deployeddigital"
+      # Leave TAILSCALE_TAGS empty to use the tags the auth key was generated
+      # with. Only set it when EVERY tag is declared in tailscale.json's
+      # tagOwners AND the auth key was generated allowing those tags.
+      TAILSCALE_TAGS=""
       TAILSCALE_SSH="1"
       TAILSCALE_EXTRA_ARGS="--accept-routes"
 

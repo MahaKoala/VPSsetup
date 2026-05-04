@@ -254,28 +254,51 @@ if bool "$INSTALL_TAILSCALE"; then
     fi
     systemctl enable --now tailscaled
 
+    # Wait briefly for tailscaled to be ready before issuing `tailscale up`;
+    # on slow VMs the daemon can still be starting when we hit it.
+    for _ in 1 2 3 4 5; do
+        tailscale status >/dev/null 2>&1 && break
+        sleep 1
+    done
+
     if [[ -n "$TAILSCALE_AUTHKEY" ]]; then
         TS_HOST="${TAILSCALE_HOSTNAME:-${VPS_HOSTNAME:-$(hostname)}}"
         args=( up
                --authkey="$TAILSCALE_AUTHKEY"
                --hostname="$TS_HOST"
                --accept-dns="$TAILSCALE_ACCEPT_DNS"
-               --operator="$VPS_USER"
-               --advertise-tags="$TAILSCALE_TAGS" )
+               --operator="$VPS_USER" )
+        # Only pass --advertise-tags when the operator has explicitly set tags.
+        # Auth keys carry their own tag list (chosen at generation time); passing
+        # extra tags requires every tag to be in tagOwners (tailscale.json) AND
+        # within the key's allowed set, or the request is rejected outright.
+        [[ -n "$TAILSCALE_TAGS" ]] && args+=( --advertise-tags="$TAILSCALE_TAGS" )
         bool "$TAILSCALE_SSH"     && args+=( --ssh )
         bool "$TAILSCALE_EXIT_NODE" && args+=( --advertise-exit-node )
         [[ -n "$TAILSCALE_ADVERTISE_ROUTES" ]] && args+=( --advertise-routes="$TAILSCALE_ADVERTISE_ROUTES" )
         [[ -n "$TAILSCALE_EXTRA_ARGS" ]] && args+=( $TAILSCALE_EXTRA_ARGS )
 
-        if tailscale "${args[@]}"; then
+        # Capture stderr so we can show the operator *why* it failed instead
+        # of a generic WARN. Common causes: tag not in tagOwners, expired key,
+        # already-used non-reusable key, or DNS/network blockage to controlplane.
+        ts_out="$(tailscale "${args[@]}" 2>&1)" && ts_rc=0 || ts_rc=$?
+        [[ -n "$ts_out" ]] && echo "$ts_out"
+        if (( ts_rc == 0 )); then
             # Scrub the auth key from disk so VPS snapshots/images don't leak it.
             sed -i -E 's|^TAILSCALE_AUTHKEY=.*|TAILSCALE_AUTHKEY=""|' "$ENV_FILE"
         else
-            echo "WARN: tailscale up failed"
+            echo
+            echo "ERROR: 'tailscale up' failed (exit $ts_rc). Common causes:"
+            echo "  - the auth key is expired, already used, or marked single-use"
+            echo "  - a tag in --advertise-tags is not in tagOwners (check tailscale.json)"
+            echo "  - the auth key was generated with a different tag set than requested"
+            echo "  - controlplane unreachable (firewall blocking *.tailscale.com:443)"
+            echo "  Re-run after fixing — vps-harden.sh is idempotent."
         fi
         tailscale status || true
     else
         echo "No TAILSCALE_AUTHKEY; tailscaled installed but not joined."
+        echo "Join manually with: sudo tailscale up --auth-key=<your-key>"
     fi
 fi
 
