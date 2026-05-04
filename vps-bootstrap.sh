@@ -174,20 +174,26 @@ if [[ "$INSTALL_BREW" == "1" ]]; then
     fi
 
     # System-wide shellenv covers SSH non-login shells, cron, systemd User=.
+    # Use `brew shellenv bash` (matches what Homebrew's installer prints) so PATH
+    # is configured correctly even when the script runs without an interactive shell.
     cat > /etc/profile.d/homebrew.sh <<'EOF'
 if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
-  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 fi
 EOF
     chmod 0644 /etc/profile.d/homebrew.sh
 
-    BREW_LINE='eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
+    BREW_LINE='eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"'
     for rc in "${USER_HOME}/.profile" "${USER_HOME}/.bashrc"; do
         append_line_if_missing "$rc" "$BREW_LINE" "$VPS_USER" "$VPS_USER"
     done
 
+    # Every sudo-to-user block must `cd "$HOME"` first. sudo -Hu inherits the
+    # parent's CWD (typically /root), which the new user cannot read — that's
+    # the "current working directory must be readable" error from brew.
     run_as_user '
-      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+      cd "$HOME"
+      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
       brew analytics off || true
       brew update || true
     '
@@ -195,7 +201,8 @@ EOF
     if [[ "$INSTALL_BREW_PACKAGES" == "1" && -n "${BREW_PACKAGES// }" ]]; then
         echo "--- brew install $BREW_PACKAGES ---"
         sudo -Hiu "$VPS_USER" env BREW_PACKAGES="$BREW_PACKAGES" bash -lc '
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          cd "$HOME"
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
           for pkg in $BREW_PACKAGES; do
             if brew list --formula "$pkg" >/dev/null 2>&1; then
               echo "ok: $pkg"
@@ -211,6 +218,7 @@ fi
 if [[ "$INSTALL_NODE_LTS" == "1" ]]; then
     echo "--- Node LTS via nvm ---"
     sudo -Hiu "$VPS_USER" env NVM_VERSION="$NVM_VERSION" bash -lc '
+      cd "$HOME"
       export NVM_DIR="$HOME/.nvm"
       [ -s "$NVM_DIR/nvm.sh" ] || curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" | bash
       . "$NVM_DIR/nvm.sh"

@@ -357,34 +357,45 @@ done < "$AUTH"
 chmod 600 "$ROOT_AUTH"
 
 # 5. Homebrew (as the user, not root)
+#
+# Critical: every `sudo -Hu "$VPS_USER" bash` block must `cd "$HOME"` first.
+# Without -i, sudo inherits the parent's CWD (typically /root), which the new
+# user cannot read. brew then refuses to start with:
+#   "Error: The current working directory must be readable to <user> to run brew."
+# The eval of `brew shellenv` then returns nothing → every subsequent `brew`
+# call is "command not found".
 if [[ "${INSTALL_BREW:-1}" == "1" ]]; then
     echo "--- homebrew ---"
     if [[ ! -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
         mkdir -p /home/linuxbrew/.linuxbrew
         chown -R "$VPS_USER:$VPS_USER" /home/linuxbrew
-        # Pipe installer to bash via stdin — avoids login-shell profile sourcing
-        # and nested-quoting issues that bit us with `sudo -Hiu ... bash -lc`.
-        curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh \
-          | sudo -Hu "$VPS_USER" env NONINTERACTIVE=1 bash
+        # Run installer as the user from a CWD they own. bash -c (not -lc) avoids
+        # login-shell profile sourcing during the install itself.
+        sudo -Hu "$VPS_USER" env NONINTERACTIVE=1 bash -c '
+          cd "$HOME"
+          curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash
+        '
     fi
     cat > /etc/profile.d/homebrew.sh <<'PROFILE'
 if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
-  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 fi
 PROFILE
     chmod 644 /etc/profile.d/homebrew.sh
-    BL='eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
+    BL='eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"'
     for rc in "${USER_HOME}/.profile" "${USER_HOME}/.bashrc"; do
         append_missing "$rc" "$BL" "$VPS_USER" "$VPS_USER"
     done
     sudo -Hu "$VPS_USER" bash -s <<'INNER_EOF'
-eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+cd "$HOME"
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 brew analytics off || true
 brew update || true
 INNER_EOF
     if [[ -n "${BREW_PACKAGES// }" ]]; then
         sudo -Hu "$VPS_USER" env BREW_PACKAGES="$BREW_PACKAGES" bash -s <<'INNER_EOF'
-eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+cd "$HOME"
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 for pkg in $BREW_PACKAGES; do
     if brew list --formula "$pkg" >/dev/null 2>&1; then
         echo "ok: $pkg"
@@ -399,6 +410,7 @@ fi
 # 6. Optional: Node via nvm
 if [[ "${INSTALL_NODE_LTS:-0}" == "1" ]]; then
     sudo -Hu "$VPS_USER" bash -s <<'INNER_EOF'
+cd "$HOME"
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] || curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 . "$NVM_DIR/nvm.sh"

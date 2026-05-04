@@ -13,9 +13,13 @@ id -u "$VPS_USER" &>/dev/null || { echo "User $VPS_USER does not exist; run vps-
 run_as_user() { sudo -Hiu "$VPS_USER" bash -lc "$*"; }
 
 # Most coding agents publish brew taps; prefer brew where possible.
+# `cd "$HOME"` is required: sudo -Hu inherits the parent's CWD (/root), which
+# the unprivileged user cannot read — that's the "current working directory
+# must be readable" error from brew. -Hiu *should* cd to home, but be explicit.
 run_as_user '
+  cd "$HOME"
   if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
-    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 
     # Code agents (brew taps)
     brew install sst/tap/opencode || true
