@@ -1,6 +1,12 @@
 
 # Single-File VPS Init Script (Works Anywhere)
 
+Quickstart:
+ssh -t root@<ip> "bash <(curl -fsSL https://raw.githubusercontent.com/<you>/<repo>/main/vps-init.sh)"
+
+Already in SSH:
+bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)
+
 For providers without cloud-init (Contabo, RackNerd, most budget VPS hosts, or when you just want to skip Hetzner's user-data UI), the workflow becomes:
 
 ```
