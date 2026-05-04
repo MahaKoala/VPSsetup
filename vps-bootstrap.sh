@@ -245,6 +245,16 @@ fi
 
 # ---------- 8. Shell niceties ----------
 BASHRC="${USER_HOME}/.bashrc"
+PROFILE="${USER_HOME}/.profile"
+
+# Ensure ~/.local/bin is in PATH for user-local installers (Claude Code,
+# pipx, npm-prefix tools, etc.). Idempotent: the inner `case` skips if the
+# directory is already in PATH, so sourcing the rc twice doesn't duplicate.
+LOCAL_BIN_LINE='[ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH";; esac'
+for rc in "$PROFILE" "$BASHRC"; do
+    append_line_if_missing "$rc" "$LOCAL_BIN_LINE" "$VPS_USER" "$VPS_USER"
+done
+
 append_line_if_missing "$BASHRC" 'command -v starship >/dev/null && eval "$(starship init bash)"' "$VPS_USER" "$VPS_USER"
 append_line_if_missing "$BASHRC" 'command -v zoxide >/dev/null && eval "$(zoxide init bash)"' "$VPS_USER" "$VPS_USER"
 append_line_if_missing "$BASHRC" 'command -v eza >/dev/null && alias ls="eza --group-directories-first"' "$VPS_USER" "$VPS_USER"

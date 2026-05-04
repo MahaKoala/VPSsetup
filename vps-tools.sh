@@ -59,6 +59,17 @@ else
     echo "WARN: brew not found at /home/linuxbrew/.linuxbrew/bin/brew — skipping brew tools"
 fi
 
+# Ensure ~/.local/bin is in PATH so claude (and any other ~/.local/bin tool)
+# resolves in fresh shells. Idempotent: case-pattern skips when already present.
+LOCAL_BIN_LINE='[ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH";; esac'
+for rc in "$HOME/.profile" "$HOME/.bashrc"; do
+    [ -f "$rc" ] || touch "$rc"
+    grep -qxF "$LOCAL_BIN_LINE" "$rc" || printf '\n%s\n' "$LOCAL_BIN_LINE" >> "$rc"
+done
+# Also export for the rest of THIS heredoc's commands (so any post-install
+# verification can find claude / other ~/.local/bin tools).
+[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"
+
 echo "--- tmuxai ---"
 curl -fsSL https://get.tmuxai.dev | bash || echo "WARN: tmuxai install failed"
 

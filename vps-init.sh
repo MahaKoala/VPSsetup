@@ -446,6 +446,14 @@ fi
 
 # 8. Shell niceties
 BASHRC="${USER_HOME}/.bashrc"
+PROFILE="${USER_HOME}/.profile"
+
+# Ensure ~/.local/bin is in PATH (Claude Code, pipx, npm-prefix tools, etc.)
+LBL='[ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH";; esac'
+for rc in "$PROFILE" "$BASHRC"; do
+    append_missing "$rc" "$LBL" "$VPS_USER" "$VPS_USER"
+done
+
 append_missing "$BASHRC" 'command -v starship >/dev/null && eval "$(starship init bash)"' "$VPS_USER" "$VPS_USER"
 append_missing "$BASHRC" 'command -v zoxide >/dev/null && eval "$(zoxide init bash)"'     "$VPS_USER" "$VPS_USER"
 append_missing "$BASHRC" 'command -v eza >/dev/null && alias ls="eza --group-directories-first"' "$VPS_USER" "$VPS_USER"
@@ -767,6 +775,14 @@ if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
 else
     echo "WARN: brew not found at /home/linuxbrew/.linuxbrew/bin/brew — skipping brew tools"
 fi
+
+# Ensure ~/.local/bin is in PATH (Claude Code installs there)
+LBL='[ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH";; esac'
+for rc in "$HOME/.profile" "$HOME/.bashrc"; do
+    [ -f "$rc" ] || touch "$rc"
+    grep -qxF "$LBL" "$rc" || printf '\n%s\n' "$LBL" >> "$rc"
+done
+[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"
 
 echo "--- tmuxai ---"
 curl -fsSL https://get.tmuxai.dev | bash || echo "WARN: tmuxai install failed"
