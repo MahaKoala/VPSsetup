@@ -70,7 +70,9 @@ apt-get install -y --no-install-recommends \
     software-properties-common apt-transport-https
 
 # fd-find quirk on Debian/Ubuntu
-[[ -e /usr/local/bin/fd ]] || ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+if [[ ! -e /usr/local/bin/fd ]] && command -v fdfind >/dev/null; then
+    ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+fi
 
 # ---------- 2. Hostname ----------
 echo "--- Hostname ---"
@@ -144,10 +146,15 @@ add_keys() {
 
 # Mirror keys to root as a transitional safety net so you cannot lock yourself
 # out during the first-boot handover. The hardening script can later restrict
-# root login.
+# root login. Append+dedupe to preserve any existing root keys across re-runs.
 install -d -m 700 /root/.ssh
-cat "$AUTH" > /root/.ssh/authorized_keys
-chmod 600 /root/.ssh/authorized_keys
+ROOT_AUTH=/root/.ssh/authorized_keys
+touch "$ROOT_AUTH"
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+    grep -qxF "$line" "$ROOT_AUTH" || echo "$line" >> "$ROOT_AUTH"
+done < "$AUTH"
+chmod 600 "$ROOT_AUTH"
 
 # ---------- 5. Homebrew ----------
 if [[ "$INSTALL_BREW" == "1" ]]; then

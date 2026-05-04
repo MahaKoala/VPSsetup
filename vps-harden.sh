@@ -75,6 +75,20 @@ fi
 # ---------- 3. UFW ----------
 if bool "$ENABLE_UFW"; then
     echo "--- UFW ---"
+
+    # Lockout safety: refuse to enable UFW with no public-SSH rule unless
+    # Tailscale is verifiably up. The interface-wide tailscale0 allow added
+    # below depends on the interface existing — without it we'd brick SSH.
+    if ! bool "$PUBLIC_SSH_ALLOWED"; then
+        if ! command -v tailscale >/dev/null || ! tailscale status >/dev/null 2>&1; then
+            echo "ERROR: PUBLIC_SSH_ALLOWED=0 but Tailscale is not connected."
+            echo "       Refusing to enable UFW (you would be locked out)."
+            echo "       Run with PUBLIC_SSH_ALLOWED=1 first, verify the tailnet,"
+            echo "       then re-run with PUBLIC_SSH_ALLOWED=0 to lock down."
+            exit 1
+        fi
+    fi
+
     ufw --force reset >/dev/null
     ufw default deny incoming
     ufw default allow outgoing
@@ -83,7 +97,7 @@ if bool "$ENABLE_UFW"; then
         ufw allow "${SSH_PORT}/tcp" comment 'public ssh'
     fi
 
-    # Tailscale direct UDP (heps NAT traversal even if not strictly required)
+    # Tailscale direct UDP (helps NAT traversal even if not strictly required)
     ufw allow 41641/udp comment 'tailscale direct'
     ufw allow in on tailscale0 comment 'tailscale interface'
 
@@ -208,10 +222,33 @@ if bool "$ENABLE_UFW" && ! bool "$PUBLIC_SSH_ALLOWED"; then
     if command -v tailscale &>/dev/null && tailscale status &>/dev/null; then
         echo "Tailscale connected -> restricting SSH to tailscale0"
         ufw allow in on tailscale0 to any port "$SSH_PORT" proto tcp comment 'ssh via tailscale'
-        ufw delete allow "${SSH_PORT}/tcp" || true
+
+        # Verify the tailnet SSH path is actually visible in UFW before
+        # tearing the public rule down.
+        if ufw status | grep -qE "tailscale0.*ALLOW"; then
+            ufw delete allow "${SSH_PORT}/tcp" || true
+            echo "OK: tailnet SSH rule verified; public ${SSH_PORT}/tcp removed"
+        else
+            echo "WARN: tailnet SSH rule not visible in 'ufw status'; leaving public rule in place"
+        fi
     else
         echo "WARN: Tailscale not connected; leaving public SSH rule untouched"
     fi
+fi
+
+# ---------- 9. SSH access summary ----------
+echo
+echo "--- SSH access summary ---"
+if command -v ufw >/dev/null && ufw status >/dev/null 2>&1; then
+    ufw status verbose | grep -iE "(^Status:|${SSH_PORT}|tailscale)" || true
+fi
+echo "PermitRootLogin = ${PERMIT_ROOT_LOGIN}"
+if [[ "$PERMIT_ROOT_LOGIN" != "no" ]]; then
+    echo "  -> root SSH allowed (key-only); root keys mirrored from ${VPS_USER} as recovery hatch"
+fi
+if bool "$LIMIT_SSH_TO_ADMIN_USER"; then
+    extra=""; [[ "$PERMIT_ROOT_LOGIN" != "no" ]] && extra=" root"
+    echo "AllowUsers      = ${VPS_USER}${extra}"
 fi
 
 echo "===== harden complete @ $(date -Is) ====="

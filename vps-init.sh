@@ -283,7 +283,9 @@ apt-get install -y --no-install-recommends \
   python3 python3-pip python3-venv \
   fd-find unzip zip jq htop tmux rsync \
   software-properties-common apt-transport-https
-[[ -e /usr/local/bin/fd ]] || ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+if [[ ! -e /usr/local/bin/fd ]] && command -v fdfind >/dev/null; then
+    ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+fi
 
 # 2. Hostname
 echo "--- hostname ---"
@@ -317,7 +319,7 @@ if id -u "$VPS_USER" &>/dev/null; then
     uid="$(id -u "$VPS_USER")"
     (( uid >= 1000 )) || { echo "Refusing system user $VPS_USER (uid $uid)"; exit 1; }
 else
-    useradd -m -s /bin/bash -d "/home/${VPS_USER}" "$VPS_USER"
+    useradd -m -s "${VPS_USER_SHELL:-/bin/bash}" -d "/home/${VPS_USER}" "$VPS_USER"
 fi
 usermod -aG sudo "$VPS_USER"
 if [[ "${ENABLE_PASSWORDLESS_SUDO:-1}" == "1" ]]; then
@@ -343,10 +345,16 @@ add_keys() {
 [[ -n "${SSH_GH_USER:-}" ]] && add_keys "github/$SSH_GH_USER"   "$(curl -fsSL "https://github.com/${SSH_GH_USER}.keys" || true)"
 [[ -n "${SSH_AUTHORIZED_KEYS:-}" ]] && add_keys "env" "$SSH_AUTHORIZED_KEYS"
 
-# Mirror to root as a safety net (harden script later tightens root login)
+# Mirror to root as a safety net (harden script later tightens root login).
+# Append+dedupe so re-runs don't wipe manually-added root keys.
 install -d -m 700 /root/.ssh
-cat "$AUTH" > /root/.ssh/authorized_keys
-chmod 600 /root/.ssh/authorized_keys
+ROOT_AUTH=/root/.ssh/authorized_keys
+touch "$ROOT_AUTH"
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+    grep -qxF "$line" "$ROOT_AUTH" || echo "$line" >> "$ROOT_AUTH"
+done < "$AUTH"
+chmod 600 "$ROOT_AUTH"
 
 # 5. Homebrew (as the user, not root)
 if [[ "${INSTALL_BREW:-1}" == "1" ]]; then
@@ -483,6 +491,15 @@ fi
 # UFW
 if bool "${ENABLE_UFW:-1}"; then
     echo "--- ufw ---"
+    # Lockout safety: refuse to enable UFW with no public-SSH rule unless
+    # Tailscale is actually up and reachable.
+    if ! bool "${PUBLIC_SSH_ALLOWED:-1}"; then
+        if ! command -v tailscale >/dev/null || ! tailscale status >/dev/null 2>&1; then
+            echo "ERROR: PUBLIC_SSH_ALLOWED=0 but Tailscale is not connected."
+            echo "       Refusing to enable UFW (would lock you out)."
+            exit 1
+        fi
+    fi
     ufw --force reset >/dev/null
     ufw default deny incoming
     ufw default allow outgoing
@@ -587,11 +604,28 @@ fi
 if bool "${ENABLE_UFW:-1}" && ! bool "${PUBLIC_SSH_ALLOWED:-1}"; then
     if command -v tailscale >/dev/null && tailscale status >/dev/null 2>&1; then
         ufw allow in on tailscale0 to any port "$SSH_PORT" proto tcp comment 'ssh via tailnet'
-        ufw delete allow "${SSH_PORT}/tcp" || true
-        echo "SSH is now restricted to tailscale0"
+        # Verify tailnet rule is actually present before tearing down public SSH
+        if ufw status | grep -qE "tailscale0.*ALLOW"; then
+            ufw delete allow "${SSH_PORT}/tcp" || true
+            echo "OK: tailnet SSH rule verified; public ${SSH_PORT}/tcp removed"
+        else
+            echo "WARN: tailnet SSH rule not visible in 'ufw status'; leaving public rule in place"
+        fi
     else
         echo "WARN: tailscale not connected — leaving public SSH rule in place"
     fi
+fi
+
+# Final SSH access summary
+echo
+echo "--- SSH access summary ---"
+ufw status verbose 2>/dev/null | grep -iE "(^Status:|${SSH_PORT}|tailscale)" || true
+echo "PermitRootLogin = ${PERMIT_ROOT_LOGIN}"
+[[ "$PERMIT_ROOT_LOGIN" != "no" ]] && \
+    echo "  -> root SSH allowed (key-only); keys mirrored from ${VPS_USER} as recovery hatch"
+if bool "${LIMIT_SSH_TO_ADMIN_USER:-1}"; then
+    extra=""; [[ "$PERMIT_ROOT_LOGIN" != "no" ]] && extra=" root"
+    echo "AllowUsers      = ${VPS_USER}${extra}"
 fi
 
 echo "===== harden done @ $(date -Is) ====="
@@ -622,7 +656,7 @@ echo "User     : ${VPS_USER}"
 echo "Log      : /var/log/vps-bootstrap.log"
 echo
 echo "Try:      ssh ${VPS_USER}@$(hostname -I | awk '{print $1}')"
-if bool "${INSTALL_TAILSCALE}"; then
+if [[ "${INSTALL_TAILSCALE}" == "1" ]]; then
     echo "Tailnet:  ssh ${VPS_USER}@$(tailscale status --self --json 2>/dev/null | grep -oP '"DNSName":\s*"\K[^"]+' | head -1 || echo '<hostname>')"
 fi
 echo
