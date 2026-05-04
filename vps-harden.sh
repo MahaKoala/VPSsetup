@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# vps-harden.sh — SSH, UFW, fail2ban, unattended-upgrades, sysctl, Tailscale
+set -Eeuo pipefail
+umask 022
+
+LOG=/var/log/vps-bootstrap.log
+exec > >(tee -a "$LOG") 2>&1
+trap 'echo "[ERROR] line $LINENO: $BASH_COMMAND" >&2' ERR
+echo "===== vps-harden @ $(date -Is) ====="
+
+[[ $EUID -eq 0 ]] || { echo "Must run as root"; exit 1; }
+
+ENV_FILE="${ENV_FILE:-/etc/vps/bootstrap.env}"
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+
+export DEBIAN_FRONTEND=noninteractive
+bool() { [[ "$1" == "1" || "$1" == "true" || "$1" == "yes" ]]; }
+
+# ---------- Safety gates ----------
+if ! id -u "$VPS_USER" &>/dev/null; then
+    echo "ERROR: user $VPS_USER missing — run vps-bootstrap.sh first"; exit 1
+fi
+if [[ "$ALLOW_PASSWORD_AUTH" == "no" ]] && ! [[ -s "/home/${VPS_USER}/.ssh/authorized_keys" ]]; then
+    echo "ERROR: refusing to disable password auth with empty authorized_keys"; exit 1
+fi
+
+# ---------- 1. Packages ----------
+apt-get update -y
+apt-get install -y openssh-server ufw fail2ban unattended-upgrades \
+                   apt-listchanges curl ca-certificates gnupg lsb-release
+
+# ---------- 2. SSH hardening ----------
+if bool "$HARDEN_SSH"; then
+    echo "--- SSH hardening ---"
+    mkdir -p /etc/ssh/sshd_config.d
+    DROPIN=/etc/ssh/sshd_config.d/99-vps-hardening.conf
+
+    {
+      echo "Port ${SSH_PORT}"
+      echo "PermitRootLogin ${PERMIT_ROOT_LOGIN}"
+      echo "PasswordAuthentication ${ALLOW_PASSWORD_AUTH}"
+      echo "KbdInteractiveAuthentication no"
+      echo "ChallengeResponseAuthentication no"
+      echo "PubkeyAuthentication yes"
+      echo "PermitEmptyPasswords no"
+      echo "UsePAM yes"
+      echo "X11Forwarding no"
+      echo "AllowAgentForwarding yes"
+      echo "AllowTcpForwarding yes"
+      echo "ClientAliveInterval 60"
+      echo "ClientAliveCountMax 3"
+      echo "MaxAuthTries 4"
+      echo "LoginGraceTime 20"
+      echo "Protocol 2"
+      bool "$DISABLE_IPV6_SSH" && echo "AddressFamily inet"
+      if bool "$LIMIT_SSH_TO_ADMIN_USER"; then
+          extra=""
+          [[ "$PERMIT_ROOT_LOGIN" != "no" ]] && extra=" root"
+          echo "AllowUsers ${VPS_USER}${extra}"
+      fi
+    } > "$DROPIN"
+    chmod 644 "$DROPIN"
+
+    # Ubuntu 24.04 ships ssh.socket socket-activated. Drop-in changes don't
+    # always apply on first restart unless we disable the socket and use the
+    # classic ssh.service.
+    systemctl disable --now ssh.socket 2>/dev/null || true
+
+    sshd -t   # validate before reload
+    systemctl enable --now ssh
+    systemctl restart ssh
+fi
+
+# ---------- 3. UFW ----------
+if bool "$ENABLE_UFW"; then
+    echo "--- UFW ---"
+    ufw --force reset >/dev/null
+    ufw default deny incoming
+    ufw default allow outgoing
+
+    if bool "$PUBLIC_SSH_ALLOWED"; then
+        ufw allow "${SSH_PORT}/tcp" comment 'public ssh'
+    fi
+
+    # Tailscale direct UDP (heps NAT traversal even if not strictly required)
+    ufw allow 41641/udp comment 'tailscale direct'
+    ufw allow in on tailscale0 comment 'tailscale interface'
+
+    if bool "$ALLOW_HTTP_HTTPS"; then
+        ufw allow 80/tcp  comment 'http'
+        ufw allow 443/tcp comment 'https'
+    fi
+    for p in $EXTRA_UFW_PORTS; do ufw allow "$p"; done
+
+    ufw --force enable
+fi
+
+# ---------- 4. fail2ban ----------
+if bool "$ENABLE_FAIL2BAN"; then
+    echo "--- fail2ban ---"
+    cat >/etc/fail2ban/jail.d/sshd.local <<EOF
+[sshd]
+enabled = true
+port    = ${SSH_PORT}
+backend = systemd
+maxretry = 5
+findtime = 10m
+bantime  = 1h
+EOF
+    systemctl enable --now fail2ban
+    systemctl restart fail2ban
+fi
+
+# ---------- 5. Unattended upgrades ----------
+if bool "$ENABLE_UNATTENDED"; then
+    echo "--- unattended-upgrades ---"
+    cat >/etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+    cat >/etc/apt/apt.conf.d/52unattended-upgrades-local <<EOF
+Unattended-Upgrade::Automatic-Reboot "${UNATTENDED_AUTOREBOOT}";
+Unattended-Upgrade::Automatic-Reboot-Time "${UNATTENDED_AUTOREBOOT_TIME}";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+EOF
+    systemctl enable --now unattended-upgrades || true
+fi
+
+# ---------- 6. Sysctl hardening ----------
+if bool "$ENABLE_SYSCTL_HARDENING"; then
+    cat >/etc/sysctl.d/99-vps-hardening.conf <<'EOF'
+net.ipv4.tcp_syncookies=1
+net.ipv4.conf.all.rp_filter=1
+net.ipv4.conf.default.rp_filter=1
+net.ipv4.icmp_echo_ignore_broadcasts=1
+net.ipv4.conf.all.accept_redirects=0
+net.ipv4.conf.default.accept_redirects=0
+net.ipv6.conf.all.accept_redirects=0
+net.ipv6.conf.default.accept_redirects=0
+net.ipv4.conf.all.send_redirects=0
+net.ipv4.conf.default.send_redirects=0
+net.ipv4.conf.all.accept_source_route=0
+net.ipv6.conf.all.accept_source_route=0
+net.ipv4.conf.all.log_martians=1
+kernel.dmesg_restrict=1
+kernel.kptr_restrict=2
+kernel.yama.ptrace_scope=1
+fs.protected_hardlinks=1
+fs.protected_symlinks=1
+fs.protected_fifos=2
+fs.protected_regular=2
+EOF
+
+    if [[ -n "$TAILSCALE_ADVERTISE_ROUTES" ]] || bool "$TAILSCALE_EXIT_NODE"; then
+        cat >/etc/sysctl.d/99-tailscale-routing.conf <<'EOF'
+net.ipv4.ip_forward=1
+net.ipv6.conf.all.forwarding=1
+EOF
+    fi
+
+    if bool "$DISABLE_IPV6"; then
+        cat >/etc/sysctl.d/98-disable-ipv6.conf <<'EOF'
+net.ipv6.conf.all.disable_ipv6=1
+net.ipv6.conf.default.disable_ipv6=1
+EOF
+    fi
+
+    sysctl --system >/dev/null
+fi
+
+# ---------- 7. Tailscale ----------
+if bool "$INSTALL_TAILSCALE"; then
+    echo "--- Tailscale ---"
+    if ! command -v tailscale &>/dev/null; then
+        curl -fsSL https://tailscale.com/install.sh | sh
+    fi
+    systemctl enable --now tailscaled
+
+    if [[ -n "$TAILSCALE_AUTHKEY" ]]; then
+        TS_HOST="${TAILSCALE_HOSTNAME:-${VPS_HOSTNAME:-$(hostname)}}"
+        args=( up
+               --authkey="$TAILSCALE_AUTHKEY"
+               --hostname="$TS_HOST"
+               --accept-dns="$TAILSCALE_ACCEPT_DNS"
+               --operator="$VPS_USER"
+               --advertise-tags="$TAILSCALE_TAGS" )
+        bool "$TAILSCALE_SSH"     && args+=( --ssh )
+        bool "$TAILSCALE_EXIT_NODE" && args+=( --advertise-exit-node )
+        [[ -n "$TAILSCALE_ADVERTISE_ROUTES" ]] && args+=( --advertise-routes="$TAILSCALE_ADVERTISE_ROUTES" )
+        [[ -n "$TAILSCALE_EXTRA_ARGS" ]] && args+=( $TAILSCALE_EXTRA_ARGS )
+
+        if tailscale "${args[@]}"; then
+            # Scrub the auth key from disk so VPS snapshots/images don't leak it.
+            sed -i -E 's|^TAILSCALE_AUTHKEY=.*|TAILSCALE_AUTHKEY=""|' "$ENV_FILE"
+        else
+            echo "WARN: tailscale up failed"
+        fi
+        tailscale status || true
+    else
+        echo "No TAILSCALE_AUTHKEY; tailscaled installed but not joined."
+    fi
+fi
+
+# ---------- 8. Lock down public SSH after Tailscale is up (optional 2nd run) ----------
+if bool "$ENABLE_UFW" && ! bool "$PUBLIC_SSH_ALLOWED"; then
+    if command -v tailscale &>/dev/null && tailscale status &>/dev/null; then
+        echo "Tailscale connected -> restricting SSH to tailscale0"
+        ufw allow in on tailscale0 to any port "$SSH_PORT" proto tcp comment 'ssh via tailscale'
+        ufw delete allow "${SSH_PORT}/tcp" || true
+    else
+        echo "WARN: Tailscale not connected; leaving public SSH rule untouched"
+    fi
+fi
+
+echo "===== harden complete @ $(date -Is) ====="

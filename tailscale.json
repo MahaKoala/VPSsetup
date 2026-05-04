@@ -1,0 +1,15 @@
+{
+  "tagOwners": {
+    "tag:vps":        ["autogroup:admin"],
+    "tag:staging":    ["autogroup:admin"],
+    "tag:production": ["autogroup:admin"]
+  },
+  "ssh": [
+    {
+      "action": "accept",
+      "src":    ["autogroup:admin"],
+      "dst":    ["tag:vps"],
+      "users":  ["pink", "root"]
+    }
+  ]
+}

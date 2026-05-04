@@ -1,0 +1,50 @@
+#Paste this into Hetzner's **Cloud config / user-data** field. Replace placeholders.
+#For **DigitalOcean**, the same YAML works; for **Vultr**, paste it into "User Data"; for **Linode**, into "StackScript" or user-data. Provider differences are minor — the hostname auto-detector here only queries Hetzner's metadata endpoint; on others it falls back to `/etc/machine-id`.
+#cloud-config
+package_update: true
+package_upgrade: true
+
+write_files:
+  - path: /etc/vps/bootstrap.env
+    permissions: "0644"
+    content: |
+      VPS_USER="pink"
+      VPS_HOSTNAME=""
+      VPS_HOSTNAME_PREFIX="koala"
+      VPS_ROLE="staging"
+
+      SSH_ID="mahakoala"
+      SSH_GH_USER=""
+      SSH_AUTHORIZED_KEYS=""
+
+      ENABLE_PASSWORDLESS_SUDO="1"
+
+      INSTALL_BREW="1"
+      INSTALL_BREW_PACKAGES="1"
+      BREW_PACKAGES="starship eza tldr zoxide btop fd ripgrep bat git-delta lazygit glow ranger jq yq fzf gh node bun pnpm yarn go"
+      INSTALL_NODE_LTS="0"
+      INSTALL_DOCKER="0"
+
+      SSH_PORT="22"
+      ALLOW_PASSWORD_AUTH="no"
+      PERMIT_ROOT_LOGIN="prohibit-password"
+      LIMIT_SSH_TO_ADMIN_USER="1"
+      ENABLE_UFW="1"
+      PUBLIC_SSH_ALLOWED="1"
+      ALLOW_HTTP_HTTPS="0"
+      ENABLE_FAIL2BAN="1"
+      ENABLE_UNATTENDED="1"
+
+      INSTALL_TAILSCALE="1"
+      TAILSCALE_AUTHKEY="tskey-auth-REPLACE_ME"
+      TAILSCALE_TAGS="tag:vps,tag:staging"
+      TAILSCALE_SSH="1"
+      TAILSCALE_EXTRA_ARGS="--accept-routes"
+
+runcmd:
+  - mkdir -p /usr/local/sbin
+  - curl -fsSL https://raw.githubusercontent.com/<you>/<repo>/main/vps-bootstrap.sh -o /usr/local/sbin/vps-bootstrap.sh
+  - curl -fsSL https://raw.githubusercontent.com/<you>/<repo>/main/vps-harden.sh    -o /usr/local/sbin/vps-harden.sh
+  - chmod +x /usr/local/sbin/vps-bootstrap.sh /usr/local/sbin/vps-harden.sh
+  - /usr/local/sbin/vps-bootstrap.sh
+  - /usr/local/sbin/vps-harden.sh
