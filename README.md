@@ -310,6 +310,20 @@ sudo /usr/local/sbin/vps-harden.sh
 
 The harden script **refuses to run** if you set `PUBLIC_SSH_ALLOWED=0` while Tailscale isn't connected — it won't lock you out. After it succeeds, the `--- SSH access summary ---` block at the bottom shows the verified tailnet rule and confirms root key access is still available as the recovery hatch.
 
+### Safety guarantees
+
+The harden script has several layers of lockout protection. Worth knowing what each protects against:
+
+- **`sshd reload`, not `restart`.** Config changes are applied via `systemctl reload ssh` (SIGHUP). Existing SSH sessions stay alive — only *new* connections see the tightened config. So you can run the harden script from your active SSH session, then open a *second* SSH window to verify the new config still lets you in *before* you log out of the first one. This is the canonical "configure-without-locking-yourself-out" pattern.
+- **Pre-flight key check.** Before tightening anything, the script verifies that at least one of `/home/<user>/.ssh/authorized_keys` or `/root/.ssh/authorized_keys` is non-empty. If both are empty and password auth is being disabled → **abort** with a clear error.
+- **Per-path warnings.** If `PermitRootLogin` allows root login but `/root/.ssh/authorized_keys` is empty → **warn** that the saved root key won't actually work. If `<user>` has no keys but root does → warn that only root SSH will work after hardening.
+- **Current-session warning.** If the harden script is running inside an SSH session and the new `AllowUsers` list would exclude the user you're currently logged in as → **warn** explicitly: `Open a NEW shell as '<user>' (or root) BEFORE closing this session.`
+- **Drop-in rollback on validation failure.** The script backs up the existing `99-vps-hardening.conf`, writes the new one, and runs `sshd -t`. If `sshd -t` rejects the new drop-in → restore the previous one (or remove ours if there was no prior version) and exit. A broken sshd config is never left in place.
+- **UFW lockout gate.** `PUBLIC_SSH_ALLOWED=0` requires `tailscale status` to succeed before UFW is enabled (so you can't blindly enable a firewall with no SSH path to the box).
+- **Tailnet rule verification.** When the lockdown removes the public SSH rule, it first checks `ufw status` for the `tailscale0 ... ALLOW` rule. If that rule isn't visible, the public rule is left in place.
+
+Together: even if you misconfigure something, you keep the SSH session you're running the script *from*, plus the public path stays open until the tailnet path is verifiably alive.
+
 ### Re-running
 
 Every step is idempotent:
@@ -328,7 +342,12 @@ Logs accumulate in `/var/log/vps-bootstrap.log`.
 |---|---|
 | `bash: line 1: curl: command not found` | Older minimal image; run `apt-get update && apt-get install -y curl` first |
 | `ERROR: PUBLIC_SSH_ALLOWED=0 but Tailscale is not connected` | First run with lockdown enabled — leave `PUBLIC_SSH_ALLOWED=1` until tailnet is verified |
+| `ERROR: refusing to disable password auth — neither <user> nor /root/.ssh/authorized_keys has any keys` | No SSH key sources were resolved during bootstrap — re-run `vps-bootstrap.sh` with `SSH_ID` / `SSH_GH_USER` / `SSH_AUTHORIZED_KEYS` set, or add a key manually before re-running harden |
+| `WARN: PermitRootLogin=… but /root/.ssh/authorized_keys is empty` | sshd allows root key login but no key is installed for root. Add the key your laptop uses to `/root/.ssh/authorized_keys` (or set `PERMIT_ROOT_LOGIN=no` and rely on `<user>` only) |
+| `WARN: SSH'd in as '<x>' but new AllowUsers will be: <y>` | You're running the harden script as a user who won't be allowed in after reload. **Don't log out** — open a new SSH session as `<user>` (or root) first to verify access |
+| `ERROR: sshd -t rejected new drop-in; rolling back` | Something invalidated `99-vps-hardening.conf` — typically a stray character in `SSH_PORT`/`PERMIT_ROOT_LOGIN`/`ALLOW_PASSWORD_AUTH`. The previous drop-in is restored automatically; fix the env file and re-run |
 | `WARN: tailnet SSH rule not visible in 'ufw status'` | tailscaled didn't bring up `tailscale0`; check `journalctl -u tailscaled` and `tailscale status` |
+| `Error: The current working directory must be readable to <user> to run brew.` | A sub-shell ran as the user from `/root` (which the user can't read). The current scripts always `cd "$HOME"` first; if you see this, you're running an old copy — re-pull `vps-bootstrap.sh` |
 | `Refusing to use reserved username` | Your `VPS_USER` is `root` / `linuxbrew` / a UID < 1000 — pick a new one |
 | `WARN: brew not found at /home/linuxbrew/.linuxbrew/bin/brew` | First Homebrew install failed; re-run `vps-bootstrap.sh` after fixing the underlying network/disk issue |
 
@@ -340,12 +359,18 @@ Logs accumulate in `/var/log/vps-bootstrap.log`.
 These are points worth being explicit about:
 
 - **Node.js:** install via Homebrew (`node` formula). Brew gives one consistent install path across all VPSs. The `nvm` route is left as an opt-in (`INSTALL_NODE_LTS=1`) for projects that need to pin specific Node versions per-project.
-- **Mirror keys to root:** yes, during bootstrap, as a transitional safety net. The hardening script then enforces `PermitRootLogin prohibit-password` (no passwords, key-only) so it remains a recovery hatch rather than a routine login path.
+- **Mirror keys to root:** yes, during bootstrap, as a transitional safety net. Append+dedupe (not overwrite) so re-runs preserve any keys the cloud provider seeded or that you added by hand. The hardening script then enforces `PermitRootLogin prohibit-password` (no passwords, key-only) so root SSH remains a recovery hatch rather than a routine login path.
 - **Ubuntu 24.04 `ssh.socket`:** explicitly disable it. Without this, `sshd_config.d/*.conf` drop-ins frequently fail to apply on first restart on Noble.
+- **`reload`, not `restart`, for sshd config changes.** SIGHUP makes sshd re-read config in place; existing sessions survive, only new connections see the new config. Lets you open a verification SSH session before logging out of the script-running session.
+- **sshd drop-in rollback.** Snapshot `99-vps-hardening.conf` to `*.bak` before writing the new one; `sshd -t` validates; on failure restore the backup (or remove ours if there was no prior). A broken drop-in is never left in place.
+- **Pre-flight key check before tightening sshd.** Verify *at least one* of `<user>`'s or `root`'s `authorized_keys` is non-empty before disabling password auth. Warn (don't abort) on empty root keys when `PermitRootLogin` is permissive — the operator should know root key login won't work.
+- **Brew CWD requirement.** Every `sudo -Hu <user> bash` block that touches brew must `cd "$HOME"` first. `sudo -Hu` (without `-i`) inherits the parent CWD, typically `/root`, which the unprivileged user can't read — brew refuses to start with the "current working directory must be readable" error and the eval of `brew shellenv` returns nothing, breaking the rest of the script.
+- **`brew shellenv bash`** instead of bare `brew shellenv`. Matches what Homebrew's installer prints and removes shell-detection ambiguity in non-interactive contexts (cron, systemd User=, scripts).
 - **Tailscale auth key:** scrub from `/etc/vps/bootstrap.env` after a successful join; cloud-init `user-data` is also persisted on disk in `/var/lib/cloud/instances/*/user-data.txt`, so you should additionally use **ephemeral, tagged, time-limited** auth keys (`tskey-auth-...`) issued per-environment.
-- **Public SSH lockdown:** automated via `PUBLIC_SSH_ALLOWED=0` on a second run, gated on Tailscale actually being up — never blindly during first boot.
+- **Public SSH lockdown:** automated via `PUBLIC_SSH_ALLOWED=0` on a second run, gated on Tailscale actually being up *and* the `tailscale0 … ALLOW` rule being visible in `ufw status` before the public rule is removed — never blindly during first boot.
 - **Hostname generation:** prefer Hetzner metadata `instance-id` when available (deterministic, traceable), fall back to `/etc/machine-id`, then to random bytes. Format: `<prefix>-<role>-<id>` so role is encoded in the device name.
 - **Username collision:** explicitly refuse `root`, `linuxbrew`, or any existing system user with UID < 1000 to avoid clobbering the Linuxbrew install user.
+- **AI tooling installer paths:** brew taps where they exist (`opencode`, `crush`); `npm i -g @openai/codex` for Codex (no Linux brew formula); `claude.ai/install.sh` for Claude Code (no Linux cask). Failed installs `|| true` through so one broken upstream doesn't fail the whole tools run.
 
 ---
 
