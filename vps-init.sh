@@ -462,9 +462,42 @@ bool() { [[ "$1" == "1" || "$1" == "true" || "$1" == "yes" ]]; }
 if ! id -u "$VPS_USER" &>/dev/null; then
     echo "ERROR: $VPS_USER missing — run vps-bootstrap.sh first"; exit 1
 fi
-if [[ "$ALLOW_PASSWORD_AUTH" == "no" ]] && ! [[ -s "/home/${VPS_USER}/.ssh/authorized_keys" ]]; then
-    echo "ERROR: refusing to disable password auth with empty authorized_keys"; exit 1
+
+USER_AUTH="/home/${VPS_USER}/.ssh/authorized_keys"
+ROOT_AUTH="/root/.ssh/authorized_keys"
+
+# Pre-flight: at least one viable SSH login path must exist before we tighten.
+have_user_keys=0; have_root_keys=0
+[[ -s "$USER_AUTH" ]] && have_user_keys=1
+[[ -s "$ROOT_AUTH" ]] && have_root_keys=1
+
+if [[ "$ALLOW_PASSWORD_AUTH" == "no" ]]; then
+    if (( !have_user_keys && !have_root_keys )); then
+        echo "ERROR: refusing to disable password auth — neither $USER_AUTH"
+        echo "       nor $ROOT_AUTH has any keys. You would lock yourself out."
+        exit 1
+    fi
+    (( !have_user_keys )) && echo "WARN: $VPS_USER has no authorized_keys — only root SSH (key-only) will work."
+    if (( !have_root_keys )) && [[ "$PERMIT_ROOT_LOGIN" != "no" ]]; then
+        echo "WARN: PermitRootLogin=$PERMIT_ROOT_LOGIN but $ROOT_AUTH is empty;"
+        echo "      root SSH login will not work even though sshd_config permits it."
+    fi
 fi
+
+# If running inside an SSH session, warn when new AllowUsers excludes us.
+if [[ -n "${SSH_CONNECTION:-}" ]] && bool "${LIMIT_SSH_TO_ADMIN_USER:-1}"; then
+    current_ssh_user="${SUDO_USER:-$(whoami)}"
+    allowed="${VPS_USER}"
+    [[ "$PERMIT_ROOT_LOGIN" != "no" ]] && allowed="${allowed} root"
+    case " $allowed " in
+        *" $current_ssh_user "*) :;;
+        *)  echo "WARN: SSH'd in as '$current_ssh_user' but new AllowUsers will be: $allowed"
+            echo "      Open a NEW shell as '$VPS_USER' (or root) BEFORE closing this session."
+            ;;
+    esac
+fi
+[[ -n "${SSH_CONNECTION:-}" ]] && \
+    echo "NOTE: 'systemctl reload ssh' (SIGHUP) preserves existing sessions; new connections use the new config."
 
 apt-get update -y
 apt-get install -y openssh-server ufw fail2ban unattended-upgrades apt-listchanges
@@ -474,6 +507,7 @@ if bool "${HARDEN_SSH:-1}"; then
     echo "--- ssh hardening ---"
     mkdir -p /etc/ssh/sshd_config.d
     DROPIN=/etc/ssh/sshd_config.d/99-vps-hardening.conf
+    [[ -f "$DROPIN" ]] && cp -p "$DROPIN" "${DROPIN}.bak"
     {
       echo "Port ${SSH_PORT}"
       echo "PermitRootLogin ${PERMIT_ROOT_LOGIN}"
@@ -495,9 +529,16 @@ if bool "${HARDEN_SSH:-1}"; then
     chmod 644 "$DROPIN"
     # Ubuntu 24.04 ships ssh as a socket unit — disable so drop-ins apply reliably
     systemctl disable --now ssh.socket 2>/dev/null || true
-    sshd -t
+    # Validate; roll back on failure rather than leaving a broken drop-in.
+    if ! sshd -t; then
+        echo "ERROR: sshd -t rejected new drop-in; rolling back"
+        if [[ -f "${DROPIN}.bak" ]]; then mv "${DROPIN}.bak" "$DROPIN"; else rm -f "$DROPIN"; fi
+        exit 1
+    fi
+    rm -f "${DROPIN}.bak"
     systemctl enable --now ssh
-    systemctl restart ssh
+    # Reload (SIGHUP) preserves existing sessions; restart could drop them.
+    systemctl reload ssh
 fi
 
 # UFW

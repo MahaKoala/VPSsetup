@@ -21,9 +21,51 @@ bool() { [[ "$1" == "1" || "$1" == "true" || "$1" == "yes" ]]; }
 if ! id -u "$VPS_USER" &>/dev/null; then
     echo "ERROR: user $VPS_USER missing — run vps-bootstrap.sh first"; exit 1
 fi
-if [[ "$ALLOW_PASSWORD_AUTH" == "no" ]] && ! [[ -s "/home/${VPS_USER}/.ssh/authorized_keys" ]]; then
-    echo "ERROR: refusing to disable password auth with empty authorized_keys"; exit 1
+
+USER_AUTH="/home/${VPS_USER}/.ssh/authorized_keys"
+ROOT_AUTH="/root/.ssh/authorized_keys"
+
+# Pre-flight: verify at least one viable SSH login path exists. The single
+# biggest cause of accidental lockout is tightening sshd while no key is in
+# the right place — verify both VPS_USER and root paths up front.
+have_user_keys=0
+have_root_keys=0
+[[ -s "$USER_AUTH" ]] && have_user_keys=1
+[[ -s "$ROOT_AUTH" ]] && have_root_keys=1
+
+if [[ "$ALLOW_PASSWORD_AUTH" == "no" ]]; then
+    if (( !have_user_keys && !have_root_keys )); then
+        echo "ERROR: refusing to disable password auth — neither $USER_AUTH"
+        echo "       nor $ROOT_AUTH has any keys. You would lock yourself out."
+        echo "       Re-run vps-bootstrap.sh with SSH_ID/SSH_GH_USER/SSH_AUTHORIZED_KEYS set."
+        exit 1
+    fi
+    if (( !have_user_keys )); then
+        echo "WARN: $VPS_USER has no authorized_keys — only root SSH (key-only) will work."
+    fi
+    if (( !have_root_keys )) && [[ "$PERMIT_ROOT_LOGIN" != "no" ]]; then
+        echo "WARN: PermitRootLogin=$PERMIT_ROOT_LOGIN but $ROOT_AUTH is empty;"
+        echo "      root SSH login will not work even though sshd_config permits it."
+    fi
 fi
+
+# If running inside an SSH session, warn loudly when the new AllowUsers list
+# would exclude the current user. Don't abort — operator may have a reason —
+# but make sure they see it before any reload happens.
+if [[ -n "${SSH_CONNECTION:-}" ]] && bool "$LIMIT_SSH_TO_ADMIN_USER"; then
+    current_ssh_user="${SUDO_USER:-$(whoami)}"
+    allowed="${VPS_USER}"
+    [[ "$PERMIT_ROOT_LOGIN" != "no" ]] && allowed="${allowed} root"
+    case " $allowed " in
+        *" $current_ssh_user "*) :;;
+        *)  echo "WARN: current SSH session is as '$current_ssh_user' but the new"
+            echo "      AllowUsers list will be: $allowed"
+            echo "      Open a NEW shell as '$VPS_USER' (or root) BEFORE closing this one."
+            ;;
+    esac
+fi
+[[ -n "${SSH_CONNECTION:-}" ]] && \
+    echo "NOTE: 'systemctl reload ssh' (SIGHUP) preserves existing sessions; new connections use the new config."
 
 # ---------- 1. Packages ----------
 apt-get update -y
@@ -35,6 +77,10 @@ if bool "$HARDEN_SSH"; then
     echo "--- SSH hardening ---"
     mkdir -p /etc/ssh/sshd_config.d
     DROPIN=/etc/ssh/sshd_config.d/99-vps-hardening.conf
+
+    # Snapshot existing drop-in so we can roll back if validation fails — a
+    # broken drop-in left in place would prevent sshd from starting on next boot.
+    [[ -f "$DROPIN" ]] && cp -p "$DROPIN" "${DROPIN}.bak"
 
     {
       echo "Port ${SSH_PORT}"
@@ -67,9 +113,25 @@ if bool "$HARDEN_SSH"; then
     # classic ssh.service.
     systemctl disable --now ssh.socket 2>/dev/null || true
 
-    sshd -t   # validate before reload
+    # Validate. Roll back to previous drop-in (or remove ours) on failure
+    # rather than leaving a broken sshd config in place.
+    if ! sshd -t; then
+        echo "ERROR: sshd -t rejected the new drop-in; rolling back"
+        if [[ -f "${DROPIN}.bak" ]]; then
+            mv "${DROPIN}.bak" "$DROPIN"
+        else
+            rm -f "$DROPIN"
+        fi
+        exit 1
+    fi
+    rm -f "${DROPIN}.bak"
+
     systemctl enable --now ssh
-    systemctl restart ssh
+    # Reload (SIGHUP), not restart. SIGHUP makes sshd re-read config; existing
+    # sessions stay alive, only *new* connections use the new config. That way
+    # the operator can verify a fresh login succeeds before logging out of the
+    # current session — the canonical "don't lock yourself out" pattern.
+    systemctl reload ssh
 fi
 
 # ---------- 3. UFW ----------
