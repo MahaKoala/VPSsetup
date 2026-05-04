@@ -376,14 +376,20 @@ if [[ "${INSTALL_BREW:-1}" == "1" ]]; then
           curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash
         '
     fi
+    # cd "$HOME" inside the eval subshell — see vps-bootstrap.sh for the rationale.
+    # Without it, `su <user>` from /root triggers brew's "cwd not readable" error
+    # on every shell start and PATH never gets brew.
     cat > /etc/profile.d/homebrew.sh <<'PROFILE'
 if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
-  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
+  eval "$(cd "$HOME" 2>/dev/null && /home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 fi
 PROFILE
     chmod 644 /etc/profile.d/homebrew.sh
-    BL='eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"'
+    BL='eval "$(cd "$HOME" 2>/dev/null && /home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"'
     for rc in "${USER_HOME}/.profile" "${USER_HOME}/.bashrc"; do
+        # Scrub any earlier broken variants without the cd guard.
+        [[ -f "$rc" ]] && sed -i -E \
+            '/^eval "\$\(\/home\/linuxbrew\/\.linuxbrew\/bin\/brew shellenv( bash)?\)"$/d' "$rc"
         append_missing "$rc" "$BL" "$VPS_USER" "$VPS_USER"
     done
     sudo -Hu "$VPS_USER" bash -s <<'INNER_EOF'

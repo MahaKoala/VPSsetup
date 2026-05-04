@@ -174,17 +174,23 @@ if [[ "$INSTALL_BREW" == "1" ]]; then
     fi
 
     # System-wide shellenv covers SSH non-login shells, cron, systemd User=.
-    # Use `brew shellenv bash` (matches what Homebrew's installer prints) so PATH
-    # is configured correctly even when the script runs without an interactive shell.
+    # Critical: `cd "$HOME"` inside the eval's subshell. brew refuses to start
+    # when CWD is unreadable to the running user — e.g. after `su <user>` from
+    # /root, which is the most common way to reproduce the bug. The cd happens
+    # in a subshell so the user's actual CWD is unchanged.
     cat > /etc/profile.d/homebrew.sh <<'EOF'
 if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
-  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
+  eval "$(cd "$HOME" 2>/dev/null && /home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 fi
 EOF
     chmod 0644 /etc/profile.d/homebrew.sh
 
-    BREW_LINE='eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"'
+    BREW_LINE='eval "$(cd "$HOME" 2>/dev/null && /home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"'
     for rc in "${USER_HOME}/.profile" "${USER_HOME}/.bashrc"; do
+        # Migrate: scrub any earlier broken variants we may have written
+        # (without the cd guard) so we don't accumulate duplicates.
+        [[ -f "$rc" ]] && sed -i -E \
+            '/^eval "\$\(\/home\/linuxbrew\/\.linuxbrew\/bin\/brew shellenv( bash)?\)"$/d' "$rc"
         append_line_if_missing "$rc" "$BREW_LINE" "$VPS_USER" "$VPS_USER"
     done
 
