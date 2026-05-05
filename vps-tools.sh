@@ -106,6 +106,52 @@ else
     _st warn "tmuxai" "installer failed"
 fi
 
+# tmuxai config — write ~/.config/tmuxai/config.yaml.
+# Three input modes, in order of precedence:
+#   1. TMUXAI_API_KEY env var set      → write config from env vars (CI/wizard)
+#   2. /dev/tty available, no env var  → prompt the operator interactively
+#   3. neither                         → leave the example file alone (skip)
+# Idempotent: never overwrites an existing config.yaml.
+TMUXAI_CFG_DIR="$HOME/.config/tmuxai"
+TMUXAI_CFG="$TMUXAI_CFG_DIR/config.yaml"
+
+if [ -f "$TMUXAI_CFG" ]; then
+    _st ok "tmuxai config" "already exists at $TMUXAI_CFG (kept)"
+else
+    if [ -z "${TMUXAI_API_KEY:-}" ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        echo
+        echo "tmuxai needs an LLM API key. OpenRouter recommended:"
+        echo "  https://openrouter.ai/keys"
+        echo "Press Enter at the API key prompt to skip; configure later."
+        read -r -p "  Provider (openrouter/openai/azure) [openrouter]: " _tx_p </dev/tty
+        read -r -p "  Model [anthropic/claude-haiku-4.5]: " _tx_m </dev/tty
+        read -r -s -p "  API key (input hidden, blank to skip): " _tx_k </dev/tty
+        echo
+        TMUXAI_PROVIDER="${_tx_p:-${TMUXAI_PROVIDER:-openrouter}}"
+        TMUXAI_MODEL="${_tx_m:-${TMUXAI_MODEL:-anthropic/claude-haiku-4.5}}"
+        TMUXAI_API_KEY="$_tx_k"
+        unset _tx_p _tx_m _tx_k
+    fi
+
+    if [ -n "${TMUXAI_API_KEY:-}" ]; then
+        mkdir -p "$TMUXAI_CFG_DIR"
+        umask 077
+        cat > "$TMUXAI_CFG" <<YAML_EOF
+models:
+  primary:
+    provider: ${TMUXAI_PROVIDER:-openrouter}
+    model: ${TMUXAI_MODEL:-anthropic/claude-haiku-4.5}
+    api_key: $TMUXAI_API_KEY
+YAML_EOF
+        chmod 600 "$TMUXAI_CFG"
+        umask 022
+        _st ok "tmuxai config" "written to $TMUXAI_CFG"
+        unset TMUXAI_API_KEY
+    else
+        _st warn "tmuxai config" "no API key; skipped (edit $TMUXAI_CFG manually to enable)"
+    fi
+fi
+
 echo "--- tmux plugin manager ---"
 if [ -d "$HOME/.tmux/plugins/tpm" ]; then
     _st ok "tpm" "already cloned"

@@ -414,6 +414,14 @@ if bool "$INSTALL_TAILSCALE"; then
             [[ -n "$TAILSCALE_ADVERTISE_ROUTES" ]] && args+=( --advertise-routes="$TAILSCALE_ADVERTISE_ROUTES" )
             [[ -n "$TAILSCALE_EXTRA_ARGS" ]] && args+=( $TAILSCALE_EXTRA_ARGS )
 
+            # Sanity-check the parsed key length so a parse error is obvious.
+            # Tailscale auth keys are typically 60-65 chars and have exactly 3
+            # dashes (tskey-<role>-<keyId>-<token>). Differences here suggest
+            # truncation; matching values mean parsing is OK and a Tailscale
+            # rejection is a key-state problem (used / expired / revoked).
+            key_len="${#TAILSCALE_AUTHKEY}"
+            key_dashes="$(awk -F'-' '{print NF-1}' <<< "$TAILSCALE_AUTHKEY")"
+            echo "Auth key parsed: length=$key_len, dashes=$key_dashes (expect ~60+ and 3)"
             echo "Running: tailscale up --auth-key=<redacted> --hostname=$TS_HOST [...]"
             ts_out="$(tailscale "${args[@]}" 2>&1)" && ts_rc=0 || ts_rc=$?
             [[ -n "$ts_out" ]] && echo "$ts_out"

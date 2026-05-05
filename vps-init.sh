@@ -75,6 +75,9 @@ esac
 : "${TAILSCALE_EXTRA_ARGS:=--accept-routes}"
 
 : "${INSTALL_TOOLS:=0}"
+: "${TMUXAI_PROVIDER:=openrouter}"
+: "${TMUXAI_MODEL:=anthropic/claude-haiku-4.5}"
+: "${TMUXAI_API_KEY:=}"
 
 : "${NONINTERACTIVE:=}"
 : "${RUN_HARDEN:=1}"
@@ -199,6 +202,19 @@ if (( INTERACTIVE )); then
     echo "ranger, zoxide, btop, chafa, csvlens, tmuxai, tpm. Adds 5–10 minutes."
     ask_yn "Install AI/agent tooling after hardening?" "n" \
         && INSTALL_TOOLS=1 || INSTALL_TOOLS=0
+
+    if (( INSTALL_TOOLS )); then
+        echo
+        echo "  tmuxai (AI in tmux) needs an LLM API key to function."
+        echo "  OpenRouter is recommended (one key, access to many models):"
+        echo "    https://openrouter.ai/keys"
+        echo "  Press Enter at the API key prompt to skip — you can configure"
+        echo "  manually later by creating ~/.config/tmuxai/config.yaml"
+        echo
+        ask        "tmuxai provider (openrouter/openai/azure)" TMUXAI_PROVIDER "$TMUXAI_PROVIDER"
+        ask        "tmuxai model"                              TMUXAI_MODEL    "$TMUXAI_MODEL"
+        ask_secret "tmuxai API key (blank to skip config)"     TMUXAI_API_KEY
+    fi
 
     hdr "Review"
     cat <<EOF
@@ -816,6 +832,9 @@ if bool "${INSTALL_TAILSCALE:-1}"; then
             [[ -n "${TAILSCALE_ADVERTISE_ROUTES:-}" ]] && args+=( --advertise-routes="$TAILSCALE_ADVERTISE_ROUTES" )
             [[ -n "${TAILSCALE_EXTRA_ARGS:-}" ]]      && args+=( ${TAILSCALE_EXTRA_ARGS} )
 
+            key_len="${#TAILSCALE_AUTHKEY}"
+            key_dashes="$(awk -F'-' '{print NF-1}' <<< "$TAILSCALE_AUTHKEY")"
+            echo "Auth key parsed: length=$key_len, dashes=$key_dashes (expect ~60+ and 3)"
             echo "Running: tailscale up --auth-key=<redacted> --hostname=$TS_HOST [...]"
             ts_out="$(tailscale "${args[@]}" 2>&1)" && ts_rc=0 || ts_rc=$?
             [[ -n "$ts_out" ]] && echo "$ts_out"
@@ -980,6 +999,46 @@ else
     _st warn "tmuxai" "installer failed"
 fi
 
+# tmuxai config writer: env-vars-first, fall back to interactive prompt
+# if /dev/tty is reachable, else skip with a hint.
+TMUXAI_CFG_DIR="$HOME/.config/tmuxai"
+TMUXAI_CFG="$TMUXAI_CFG_DIR/config.yaml"
+if [ -f "$TMUXAI_CFG" ]; then
+    _st ok "tmuxai config" "already exists at $TMUXAI_CFG (kept)"
+else
+    if [ -z "${TMUXAI_API_KEY:-}" ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        echo
+        echo "tmuxai needs an LLM API key. OpenRouter recommended:"
+        echo "  https://openrouter.ai/keys"
+        echo "Blank API key skips config (you can edit later)."
+        read -r -p "  Provider (openrouter/openai/azure) [openrouter]: " _tx_p </dev/tty
+        read -r -p "  Model [anthropic/claude-haiku-4.5]: " _tx_m </dev/tty
+        read -r -s -p "  API key (input hidden, blank to skip): " _tx_k </dev/tty
+        echo
+        TMUXAI_PROVIDER="${_tx_p:-${TMUXAI_PROVIDER:-openrouter}}"
+        TMUXAI_MODEL="${_tx_m:-${TMUXAI_MODEL:-anthropic/claude-haiku-4.5}}"
+        TMUXAI_API_KEY="$_tx_k"
+        unset _tx_p _tx_m _tx_k
+    fi
+    if [ -n "${TMUXAI_API_KEY:-}" ]; then
+        mkdir -p "$TMUXAI_CFG_DIR"
+        umask 077
+        cat > "$TMUXAI_CFG" <<YAML_EOF
+models:
+  primary:
+    provider: ${TMUXAI_PROVIDER:-openrouter}
+    model: ${TMUXAI_MODEL:-anthropic/claude-haiku-4.5}
+    api_key: $TMUXAI_API_KEY
+YAML_EOF
+        chmod 600 "$TMUXAI_CFG"
+        umask 022
+        _st ok "tmuxai config" "written to $TMUXAI_CFG"
+        unset TMUXAI_API_KEY
+    else
+        _st warn "tmuxai config" "no API key; skipped (edit $TMUXAI_CFG manually)"
+    fi
+fi
+
 echo "--- tmux plugin manager ---"
 if [ -d "$HOME/.tmux/plugins/tpm" ]; then
     _st ok "tpm" "already cloned"
@@ -1044,7 +1103,10 @@ fi
 if [[ "${INSTALL_TOOLS}" == "1" ]]; then
     echo
     echo "$(c '1;32' '▶ Running vps-tools.sh')"
+    # Propagate tmuxai config to vps-tools.sh; cleared after run.
+    export TMUXAI_PROVIDER TMUXAI_MODEL TMUXAI_API_KEY
     /usr/local/sbin/vps-tools.sh
+    unset TMUXAI_API_KEY
 fi
 
 echo
