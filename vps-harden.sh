@@ -178,32 +178,60 @@ if bool "$HARDEN_SSH"; then
 
     systemctl enable ssh.service 2>/dev/null || true
 
-    # Orphan-listener cleanup. Ubuntu's ssh.service has KillMode=process, so
-    # a failed start leaves the original listener `sshd` alive but unparented
-    # under the unit's cgroup. The next `start` then fails with "Address
-    # already in use" because port $SSH_PORT is still held. Detect this case
-    # — port-held + service-not-active — and kill ONLY listener processes
-    # (cmdline contains `[listener]`). Per-connection sshds carrying live
-    # SSH sessions never have that marker, so this is safe to run while we
-    # ourselves are SSH'd in.
-    if ! systemctl is-active --quiet ssh.service; then
-        for orphan_pid in $(ss -tlnp 2>/dev/null \
-                            | grep -E ":${SSH_PORT}[[:space:]]" \
-                            | grep -oP 'pid=\K[0-9]+' | sort -u); do
-            if ps -p "$orphan_pid" -o args= 2>/dev/null | grep -q 'sshd.*\[listener\]'; then
-                echo "Detected orphan sshd listener (pid=$orphan_pid) on port $SSH_PORT; killing"
-                kill -TERM "$orphan_pid" 2>/dev/null || true
-                sleep 1
-                kill -0 "$orphan_pid" 2>/dev/null && kill -KILL "$orphan_pid" 2>/dev/null || true
-            fi
-        done
+    # Override KillMode for ssh.service. Ubuntu's default is KillMode=process,
+    # which leaves orphan listener processes alive when start fails — they sit
+    # in the unit's cgroup blocking the port. Switching to KillMode=mixed
+    # makes `systemctl stop` clean the cgroup properly. Trade-off: openssh
+    # package upgrades that issue restart will now disconnect existing SSH
+    # sessions. Mitigated because (a) our harden flow uses reload (SIGHUP) for
+    # config changes, and (b) failed-start recovery is way more important than
+    # session preservation across rare openssh upgrades.
+    mkdir -p /etc/systemd/system/ssh.service.d
+    cat > /etc/systemd/system/ssh.service.d/00-vps-killmode.conf <<'EOF'
+# Written by vps-harden.sh — make systemctl stop fully clean the cgroup so
+# failed starts don't leak the listener and block the next start.
+[Service]
+KillMode=mixed
+TimeoutStopSec=15
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+
+    # Orphan/failed-state cleanup via systemd-native commands. NEVER use raw
+    # kill against systemd-managed processes — on prior versions of this
+    # script a `kill -KILL` against a tracked sshd PID has triggered a PID-1
+    # systemd ABRT and frozen the whole box. systemctl stop with the
+    # KillMode=mixed override above will properly tear the cgroup down.
+    unit_state="$(systemctl show -p ActiveState --value ssh.service 2>/dev/null || echo unknown)"
+    if [[ "$unit_state" == "failed" ]] || \
+       (! systemctl is-active --quiet ssh.service && \
+        ss -tlnp 2>/dev/null | grep -qE ":${SSH_PORT}[[:space:]]"); then
+        echo "ssh.service is in '$unit_state' state with port held; clearing via systemd"
         systemctl reset-failed ssh.service 2>/dev/null || true
+        systemctl stop ssh.service 2>/dev/null || true
+        sleep 2
+    fi
+
+    # If port is STILL held after systemd cleanup, refuse to proceed and tell
+    # the operator how to recover manually. Don't try aggressive raw kills.
+    if ! systemctl is-active --quiet ssh.service && \
+       ss -tlnp 2>/dev/null | grep -qE ":${SSH_PORT}[[:space:]]"; then
+        echo
+        echo "ERROR: port ${SSH_PORT} is still held after systemctl stop ssh.service."
+        echo "An orphan sshd listener is bound to the port outside systemd's"
+        echo "tracking. Refusing to proceed — manual intervention required."
+        echo
+        echo "Recovery (run from a console session, NOT this script):"
+        echo "  pkill -KILL -f 'sshd: /usr/sbin/sshd -D \\[listener\\]'"
+        echo "  systemctl reset-failed ssh.service"
+        echo "  systemctl start ssh.service"
+        echo "Or, if the VPS is in a strange state: power-cycle via cloud panel,"
+        echo "then re-run this script."
+        exit 1
     fi
 
     # State machine to apply config without locking the operator out:
     #   - ssh.service already active  → reload (SIGHUP, preserves sessions)
     #   - ssh.service not active yet  → start (first transition off ssh.socket)
-    #   - either fails                → fall back / print diagnostics, abort
     if systemctl is-active --quiet ssh.service; then
         if ! systemctl reload ssh.service; then
             echo "WARN: 'systemctl reload ssh' failed; falling back to restart"

@@ -640,21 +640,39 @@ if bool "${HARDEN_SSH:-1}"; then
     rm -f "${DROPIN}.bak"
     systemctl enable ssh.service 2>/dev/null || true
 
-    # Clear any orphan sshd listener holding the port (KillMode=process leftover).
-    # Only kills processes whose cmdline contains [listener]; per-connection
-    # sshds (with live sessions) lack that marker and are left alone.
-    if ! systemctl is-active --quiet ssh.service; then
-        for orphan_pid in $(ss -tlnp 2>/dev/null \
-                            | grep -E ":${SSH_PORT}[[:space:]]" \
-                            | grep -oP 'pid=\K[0-9]+' | sort -u); do
-            if ps -p "$orphan_pid" -o args= 2>/dev/null | grep -q 'sshd.*\[listener\]'; then
-                echo "Killing orphan sshd listener (pid=$orphan_pid) on port $SSH_PORT"
-                kill -TERM "$orphan_pid" 2>/dev/null || true
-                sleep 1
-                kill -0 "$orphan_pid" 2>/dev/null && kill -KILL "$orphan_pid" 2>/dev/null || true
-            fi
-        done
+    # KillMode override so systemctl stop properly cleans the cgroup. Ubuntu's
+    # default ssh.service uses KillMode=process which leaks the listener on
+    # failed starts — we've seen that lock the box up entirely. NEVER use raw
+    # kill on systemd-tracked sshd PIDs; previous versions did and triggered
+    # PID-1 ABRT freezing the box.
+    mkdir -p /etc/systemd/system/ssh.service.d
+    cat > /etc/systemd/system/ssh.service.d/00-vps-killmode.conf <<'EOF'
+[Service]
+KillMode=mixed
+TimeoutStopSec=15
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+
+    # Systemd-native cleanup if the unit is failed or the port is still held.
+    unit_state="$(systemctl show -p ActiveState --value ssh.service 2>/dev/null || echo unknown)"
+    if [[ "$unit_state" == "failed" ]] || \
+       (! systemctl is-active --quiet ssh.service && \
+        ss -tlnp 2>/dev/null | grep -qE ":${SSH_PORT}[[:space:]]"); then
+        echo "ssh.service in '$unit_state'; clearing via systemd"
         systemctl reset-failed ssh.service 2>/dev/null || true
+        systemctl stop ssh.service 2>/dev/null || true
+        sleep 2
+    fi
+
+    # If port is STILL held after systemd cleanup, refuse to proceed.
+    if ! systemctl is-active --quiet ssh.service && \
+       ss -tlnp 2>/dev/null | grep -qE ":${SSH_PORT}[[:space:]]"; then
+        echo
+        echo "ERROR: port ${SSH_PORT} still held after systemctl stop. Manual recovery:"
+        echo "  pkill -KILL -f 'sshd: /usr/sbin/sshd -D \\[listener\\]'"
+        echo "  systemctl reset-failed ssh.service && systemctl start ssh.service"
+        echo "Or power-cycle the VPS and re-run."
+        exit 1
     fi
 
     # Apply config: reload if active (preserves sessions), start if not, with

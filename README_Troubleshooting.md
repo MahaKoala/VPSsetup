@@ -28,26 +28,69 @@ sshd[…]: fatal: Cannot bind any address.
 ssh.service: Found left-over process 862 (sshd) in control group while starting unit.
 ```
 
-**Cause:** Ubuntu's `ssh.service` has `KillMode=process` — when a previous start fails, the master listener `sshd` survives but is unparented from the unit. Next `start` fails because the port is still bound.
+**Cause:** Ubuntu's `ssh.service` defaults to `KillMode=process` — a failed start leaves the master listener `sshd` alive but unparented in the unit's cgroup, blocking the next start because the port is still bound.
 
-**Fix:** kill the orphan listener (its cmdline contains `[listener]`; per-connection sshds carrying live sessions don't have that marker, so this is safe even from inside an SSH session).
+**Fix in current scripts:** `vps-harden.sh` writes a systemd override (`/etc/systemd/system/ssh.service.d/00-vps-killmode.conf`) that switches to `KillMode=mixed`. With that in place, `systemctl stop ssh.service` properly tears down the cgroup. The harden script then does a `reset-failed` + `stop` + `start` sequence — all systemd-native, no raw signals.
+
+> ⚠️ **Do NOT** use raw `kill -KILL` against sshd PIDs that systemd is tracking — earlier versions of this script tried that, and on at least one Hetzner Ubuntu 24.04 image it triggered PID-1 systemd to abort and freeze the entire box (recovery required power-cycle from cloud panel). The current scripts avoid this; if you're recovering manually, prefer the systemd-native commands below.
+
+**Manual recovery (systemd-native, safe):**
 
 ```bash
-# Identify it
-ps -ef | grep '[s]shd: /usr/sbin/sshd -D \[listener\]'
+# Apply the KillMode override if you don't have it yet
+sudo mkdir -p /etc/systemd/system/ssh.service.d
+sudo tee /etc/systemd/system/ssh.service.d/00-vps-killmode.conf <<'EOF'
+[Service]
+KillMode=mixed
+TimeoutStopSec=15
+EOF
+sudo systemctl daemon-reload
 
-# Kill it
-sudo kill <pid>           # e.g. sudo kill 862
-sleep 1
-
-# Reset systemd's failure memory and start cleanly
+# Now systemctl stop will properly clean the cgroup
 sudo systemctl reset-failed ssh.service
+sudo systemctl stop ssh.service
+sleep 2
 sudo systemctl start ssh.service
 sudo systemctl is-active ssh.service     # → active
 sudo ss -tlnp | grep ':22'                # → new sshd listener
 ```
 
-The current `vps-harden.sh` does this automatically before `start`. If you're hitting it manually, you're running an old copy — re-pull `vps-harden.sh`.
+**If `systemctl stop` doesn't free the port** (rare, indicates the listener is outside systemd's tracking entirely):
+
+```bash
+sudo pkill -KILL -f 'sshd: /usr/sbin/sshd -D \[listener\]'
+sudo systemctl reset-failed ssh.service
+sudo systemctl start ssh.service
+```
+
+`pkill -f 'sshd: … \[listener\]'` only matches the master listener (per-connection sshds have args like `sshd: maha [priv]` and don't have the `[listener]` marker), so it won't kill your live SSH session — but DO open a second SSH window first to verify, since this still bypasses systemd.
+
+### `systemd[1]: Caught <ABRT>` / `Freezing execution` (the box is dead)
+
+If you ever see broadcast messages like:
+
+```
+Broadcast message from systemd-journald@<host>:
+systemd[1]: Caught <ABRT>, from our own process.
+systemd[1]: Caught <ABRT>, dumped core as pid <N>.
+systemd[1]: Freezing execution.
+```
+
+…**PID 1 has crashed.** The init system is gone. Nothing inside the VPS can recover from this — services can't start, SSH can't bind, console (KVM web) may be the last thing that works because it bypasses systemd.
+
+**Recovery: power-cycle from the cloud panel.**
+
+For Hetzner Cloud:
+1. [console.hetzner.cloud](https://console.hetzner.cloud) → select VPS → **Power** → **Power off** (force) → **Power on**, OR **Reset** for a hard reset
+2. After reboot: if you'd previously masked `ssh.socket`, SSH won't be listening. Use the cloud panel's web **Console** (KVM/VNC) to log in as `root` (use the saved password or "Reset root password" in the panel), then:
+
+   ```bash
+   systemctl unmask ssh.socket
+   systemctl enable --now ssh.socket
+   ss -tlnp | grep ':22'    # confirm sshd listening via socket activation
+   ```
+
+3. Now SSH back from your laptop, then re-run the latest `vps-harden.sh` — the new version uses systemd-native cleanup and won't trigger this again.
 
 ### `Missing privilege separation directory: /run/sshd`
 
