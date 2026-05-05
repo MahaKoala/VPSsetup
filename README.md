@@ -401,6 +401,9 @@ Logs accumulate in `/var/log/vps-bootstrap.log`.
 
 ### Troubleshooting
 
+For deeper coverage of failure modes, recovery commands, and how to read `VerifyChecklist.sh` output, see [README_Troubleshooting.md](README_Troubleshooting.md). The table below is the quick-reference index.
+
+
 | Symptom | Likely cause |
 |---|---|
 | `bash: line 1: curl: command not found` | Older minimal image; run `apt-get update && apt-get install -y curl` first |
@@ -422,6 +425,8 @@ Logs accumulate in `/var/log/vps-bootstrap.log`.
 | `/etc/vps/bootstrap.env: Permission denied` | You ran `vps-tools.sh` (or another root-only script) as a regular user. Re-run with `sudo` — the env file is mode 600 and contains the Tailscale auth key on first run |
 | `Refusing to use reserved username` | Your `VPS_USER` is `root` / `linuxbrew` / a UID < 1000 — pick a new one |
 | `WARN: brew not found at /home/linuxbrew/.linuxbrew/bin/brew` | First Homebrew install failed; re-run `vps-bootstrap.sh` after fixing the underlying network/disk issue |
+| `WARN: failed bun` (during `vps-bootstrap.sh`) | `bun` isn't in homebrew-core under that bare name. The default `BREW_PACKAGES` now lists `oven-sh/bun/bun` (the official tap form). If you see this on an older env file, edit `BREW_PACKAGES` in `/etc/vps/bootstrap.env` to replace `bun` with `oven-sh/bun/bun` and re-run `vps-bootstrap.sh` |
+| `claude: command not found` from root (but Claude installed successfully under `<user>`) | Claude Code installs to `~/.local/bin/claude` (per-user). `vps-tools.sh` now creates `/usr/local/bin/claude` as a symlink so root can run it too. If missing on an older install: `sudo ln -sf /home/<user>/.local/bin/claude /usr/local/bin/claude` |
 
 ---
 
@@ -448,6 +453,8 @@ These are points worth being explicit about:
 - **Hostname generation:** prefer Hetzner metadata `instance-id` when available (deterministic, traceable), fall back to `/etc/machine-id`, then to random bytes. Format: `<prefix>-<role>-<id>` so role is encoded in the device name.
 - **Username collision:** explicitly refuse `root`, `linuxbrew`, or any existing system user with UID < 1000 to avoid clobbering the Linuxbrew install user.
 - **AI tooling installer paths:** brew taps where they exist (`opencode`, `crush`); `npm i -g @openai/codex` for Codex (no Linux brew formula); `claude.ai/install.sh` for Claude Code (no Linux cask). Failed installs do not abort the rest of the tools step — each step emits a `[STATUS] warn` line so the operator sees what broke.
+- **Tap-aware brew install loop.** `BREW_PACKAGES` accepts both bare formula names (`starship`, `jq`) and tap-prefixed forms (`oven-sh/bun/bun`, `charmbracelet/tap/crush`). The install loop strips the leaf for the local "already installed" check (`brew list --formula` only accepts simple names) but passes the full path to `brew install`. Default list uses `oven-sh/bun/bun` since `bun` isn't reliably resolvable under the bare name.
+- **Claude Code system-wide symlink.** Claude's installer writes to `~/.local/bin/claude` per-user, so root has no PATH access by default. After Claude install, `vps-tools.sh` creates `/usr/local/bin/claude` as a symlink to `<user>/.local/bin/claude`. Both root and the VPS user can now run `claude`; each user gets their own state under their own `$HOME/.config/claude` dir. No equivalent symlink is needed for `opencode` / `crush` / `codex` / `tmuxai` / `ollama` because those land in `/home/linuxbrew/.linuxbrew/bin` (on every user's PATH via `/etc/profile.d/homebrew.sh`) or directly in `/usr/local/bin`.
 - **Structured `[STATUS]` install protocol.** Every install attempt emits one line per step: `[STATUS] <ok|warn|fail>|<step>|<detail>`. Per-package brew loops, per-tap install attempts, npm/curl-installers, tailscale up, and ollama daemon all emit these. The format is human-readable in the log AND `grep|awk`-able for the end-of-install report. No more silent batch failures like *"some terminal tools failed"* (which doesn't say which ones).
 - **End-of-install report in `vps-init.sh`.** After all worker scripts complete, parses `/var/log/vps-bootstrap.log` for `[STATUS]` lines and prints a 3-line tally (ok / warn / fail) + the explicit list of warnings and failures + copy-pasteable retry recipes for each category. So the operator doesn't scroll back through 1000+ lines of brew output to find what broke.
 - **`~/.local/bin` in user PATH.** Claude Code, pipx, and several other Linux installers drop binaries here, but it's not on PATH by default. `vps-bootstrap.sh` writes an idempotent guard (`case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH=…;; esac`) into `~/.profile` and `~/.bashrc`. `vps-tools.sh` re-asserts the line after Claude install — defense in depth. `[ -d "$HOME/.local/bin" ] &&` guard means non-existent dirs don't pollute PATH on a fresh box.

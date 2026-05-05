@@ -223,6 +223,8 @@ The harden step has several guards against the common Ubuntu 24.04 footguns that
 - **Orphan-listener cleanup**. `KillMode=process` on `ssh.service` leaves the master `sshd` listener alive after a failed start, blocking the next start with `Address already in use`. The script kills any process bound to `SSH_PORT` whose cmdline contains `[listener]` (per-connection sshds carrying live SSH sessions don't have that marker, so this is safe even from inside an SSH session) and runs `systemctl reset-failed ssh.service`.
 - **Defaults block** for every optional `bootstrap.env` var, so partial / older env files don't trip `set -u` with `<var>: unbound variable`.
 
+The AI tools step (`INSTALL_TOOLS=1`) installs everything under the configured user (`$VPS_USER`), then creates `/usr/local/bin/claude` as a symlink to `~/.local/bin/claude` so root can also invoke it (per-user `$HOME` state is preserved). All other AI binaries (`opencode`, `crush`, `codex`, `tmuxai`, `ollama`) land in paths that are already on every user's PATH, so no extra symlinks are needed for those.
+
 ---
 
 ## Verification
