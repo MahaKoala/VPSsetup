@@ -210,12 +210,18 @@ EOF
           cd "$HOME"
           eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
           for pkg in $BREW_PACKAGES; do
-            if brew list --formula "$pkg" >/dev/null 2>&1; then
-              printf "[STATUS] ok|brew %s|already installed\n" "$pkg"
+            # Tap-prefixed forms (e.g. oven-sh/bun/bun) install via tap; the
+            # local "already installed" check expects the leaf name only.
+            case "$pkg" in
+                */*/*) name="${pkg##*/}" ;;
+                *)     name="$pkg" ;;
+            esac
+            if brew list --formula "$name" >/dev/null 2>&1; then
+              printf "[STATUS] ok|brew %s|already installed\n" "$name"
             elif brew install "$pkg"; then
-              printf "[STATUS] ok|brew %s|installed\n" "$pkg"
+              printf "[STATUS] ok|brew %s|installed\n" "$name"
             else
-              printf "[STATUS] warn|brew %s|install failed\n" "$pkg"
+              printf "[STATUS] warn|brew %s|install failed\n" "$name"
             fi
           done
         '

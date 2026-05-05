@@ -21,7 +21,7 @@ write_files:
 
       INSTALL_BREW="1"
       INSTALL_BREW_PACKAGES="1"
-      BREW_PACKAGES="starship eza tldr zoxide btop fd ripgrep bat git-delta lazygit glow ranger jq yq fzf gh node bun pnpm yarn go"
+      BREW_PACKAGES="starship eza tldr zoxide btop fd ripgrep bat git-delta lazygit glow ranger jq yq fzf gh node oven-sh/bun/bun pnpm yarn go"
       INSTALL_NODE_LTS="0"
       INSTALL_DOCKER="0"
 

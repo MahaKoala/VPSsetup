@@ -46,7 +46,7 @@ esac
 : "${SSH_AUTHORIZED_KEYS:=}"
 
 : "${INSTALL_BREW:=1}"
-: "${BREW_PACKAGES:=starship eza tldr zoxide btop fd ripgrep bat git-delta lazygit glow ranger jq yq fzf gh node bun pnpm yarn go}"
+: "${BREW_PACKAGES:=starship eza tldr zoxide btop fd ripgrep bat git-delta lazygit glow ranger jq yq fzf gh node oven-sh/bun/bun pnpm yarn go}"
 : "${INSTALL_NODE_LTS:=0}"
 : "${INSTALL_DOCKER:=0}"
 : "${ENABLE_PASSWORDLESS_SUDO:=1}"
@@ -442,12 +442,18 @@ INNER_EOF
 cd "$HOME"
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 for pkg in $BREW_PACKAGES; do
-    if brew list --formula "$pkg" >/dev/null 2>&1; then
-        printf "[STATUS] ok|brew %s|already installed\n" "$pkg"
+    # Tap-prefixed forms (e.g. oven-sh/bun/bun) install via tap; the local
+    # "already installed" check expects the leaf name only.
+    case "$pkg" in
+        */*/*) name="${pkg##*/}" ;;
+        *)     name="$pkg" ;;
+    esac
+    if brew list --formula "$name" >/dev/null 2>&1; then
+        printf "[STATUS] ok|brew %s|already installed\n" "$name"
     elif brew install "$pkg"; then
-        printf "[STATUS] ok|brew %s|installed\n" "$pkg"
+        printf "[STATUS] ok|brew %s|installed\n" "$name"
     else
-        printf "[STATUS] warn|brew %s|install failed\n" "$pkg"
+        printf "[STATUS] warn|brew %s|install failed\n" "$name"
     fi
 done
 INNER_EOF
