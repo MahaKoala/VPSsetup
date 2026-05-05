@@ -152,7 +152,35 @@ if (( INTERACTIVE )); then
     hdr "Tailscale"
     if ask_yn "Install Tailscale?" "y"; then
         INSTALL_TAILSCALE=1
+        echo
+        echo "  Generate an auth key in the Tailscale admin:"
+        echo "    https://login.tailscale.com/admin/settings/keys"
+        echo "  Recommended: ephemeral + tagged (e.g. tag:vps) + 1-hour expiry."
+        echo "  Make sure every tag you choose exists in tagOwners in your tailscale.json."
+        echo
+        echo "  Paste EITHER:"
+        echo "    (a) the auth key alone:    tskey-auth-XXXXXXXXXXXXXX"
+        echo "    (b) the full install line: curl -fsSL ... | sh && sudo tailscale up --auth-key=tskey-auth-XXX"
+        echo "  (the wizard will extract the key from (b) automatically)"
+        echo
         ask_secret "Tailscale authkey (blank to install only)" TAILSCALE_AUTHKEY
+
+        # Extract just the auth key if the user pasted the full one-liner.
+        case "$TAILSCALE_AUTHKEY" in
+            *"--auth-key="*) TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY##*--auth-key=}" ;;
+            *"--authkey="*)  TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY##*--authkey=}" ;;
+        esac
+        # Strip anything after the first whitespace (trailing flags, &&, etc.)
+        TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY%% *}"
+        # Strip a trailing semicolon or quote, just in case.
+        TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY%[;\"\']}"
+
+        if [[ -n "$TAILSCALE_AUTHKEY" && "$TAILSCALE_AUTHKEY" != tskey-* ]]; then
+            echo "  $(c '1;33' 'WARNING: that does not look like a Tailscale auth key (expected to start with tskey-).')"
+            ask_yn "Continue anyway?" "n" || { echo "Aborted."; exit 1; }
+        fi
+
+        echo
         echo "  (Leave tags blank to use the tags baked into the auth key —"
         echo "   safer than overriding, since extra tags must be in tagOwners.)"
         ask "Override tags (comma-separated, blank = key default)" TAILSCALE_TAGS ""
@@ -509,6 +537,15 @@ source "$ENV_FILE"
 : "${TAILSCALE_EXIT_NODE:=0}"
 : "${TAILSCALE_EXTRA_ARGS:=--accept-routes}"
 
+# Normalize TAILSCALE_AUTHKEY: accept either bare tskey-auth-... key OR the
+# full Tailscale-admin install one-liner (extracts the --auth-key= portion).
+case "$TAILSCALE_AUTHKEY" in
+    *"--auth-key="*) TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY##*--auth-key=}" ;;
+    *"--authkey="*)  TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY##*--authkey=}" ;;
+esac
+TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY%% *}"
+TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY%[;\"\']}"
+
 export DEBIAN_FRONTEND=noninteractive
 bool() { [[ "$1" == "1" || "$1" == "true" || "$1" == "yes" ]]; }
 
@@ -709,45 +746,71 @@ fi
 # Tailscale
 if bool "${INSTALL_TAILSCALE:-1}"; then
     echo "--- tailscale ---"
-    command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh
-    systemctl enable --now tailscaled
-    # Wait briefly for tailscaled to be ready
-    for _ in 1 2 3 4 5; do tailscale status >/dev/null 2>&1 && break; sleep 1; done
 
-    if [[ -n "${TAILSCALE_AUTHKEY:-}" ]]; then
-        TS_HOST="${TAILSCALE_HOSTNAME:-${VPS_HOSTNAME:-$(hostname)}}"
-        args=( up
-               --authkey="$TAILSCALE_AUTHKEY"
-               --hostname="$TS_HOST"
-               --accept-dns="${TAILSCALE_ACCEPT_DNS:-false}"
-               --operator="$VPS_USER" )
-        # Only pass --advertise-tags if explicitly set; the auth key already
-        # carries its tag list. Mismatch (or a tag not in tagOwners) → reject.
-        [[ -n "${TAILSCALE_TAGS:-}" ]] && args+=( --advertise-tags="$TAILSCALE_TAGS" )
-        bool "${TAILSCALE_SSH:-1}"       && args+=( --ssh )
-        bool "${TAILSCALE_EXIT_NODE:-0}" && args+=( --advertise-exit-node )
-        [[ -n "${TAILSCALE_ADVERTISE_ROUTES:-}" ]] && args+=( --advertise-routes="$TAILSCALE_ADVERTISE_ROUTES" )
-        [[ -n "${TAILSCALE_EXTRA_ARGS:-}" ]]      && args+=( ${TAILSCALE_EXTRA_ARGS} )
-
-        # Capture stderr so the operator sees the actual reason for failure.
-        ts_out="$(tailscale "${args[@]}" 2>&1)" && ts_rc=0 || ts_rc=$?
-        [[ -n "$ts_out" ]] && echo "$ts_out"
-        if (( ts_rc == 0 )); then
-            sed -i -E 's|^TAILSCALE_AUTHKEY=.*|TAILSCALE_AUTHKEY=""|' "$ENV_FILE"
-            printf '[STATUS] ok|tailscale up|joined as %s\n' "$TS_HOST"
+    if ! command -v tailscale >/dev/null; then
+        echo "Installing tailscale..."
+        if curl -fsSL https://tailscale.com/install.sh | sh; then
+            printf '[STATUS] ok|tailscale install|installed via tailscale.com/install.sh\n'
         else
-            printf '[STATUS] fail|tailscale up|exit %d\n' "$ts_rc"
-            echo
-            echo "ERROR: 'tailscale up' failed (exit $ts_rc). Common causes:"
-            echo "  - auth key expired / already used / single-use"
-            echo "  - tag in --advertise-tags not in tagOwners (tailscale.json)"
-            echo "  - auth key generated with a different tag set than requested"
-            echo "  - controlplane unreachable (firewall blocking *.tailscale.com:443)"
+            printf '[STATUS] fail|tailscale install|installer failed (network/dns?)\n'
         fi
-        tailscale status || true
     else
-        printf '[STATUS] warn|tailscale up|no TAILSCALE_AUTHKEY; tailscaled installed but not joined\n'
-        echo "Join manually: sudo tailscale up --auth-key=<your-key>"
+        printf '[STATUS] ok|tailscale install|already present\n'
+    fi
+
+    if command -v tailscale >/dev/null; then
+        systemctl enable --now tailscaled
+        for _ in 1 2 3 4 5; do tailscale status >/dev/null 2>&1 && break; sleep 1; done
+
+        if [[ -n "${TAILSCALE_AUTHKEY:-}" ]]; then
+            TS_HOST="${TAILSCALE_HOSTNAME:-${VPS_HOSTNAME:-$(hostname)}}"
+            args=( up
+                   --auth-key="$TAILSCALE_AUTHKEY"
+                   --hostname="$TS_HOST"
+                   --accept-dns="${TAILSCALE_ACCEPT_DNS:-false}"
+                   --operator="$VPS_USER" )
+            [[ -n "${TAILSCALE_TAGS:-}" ]] && args+=( --advertise-tags="$TAILSCALE_TAGS" )
+            bool "${TAILSCALE_SSH:-1}"       && args+=( --ssh )
+            bool "${TAILSCALE_EXIT_NODE:-0}" && args+=( --advertise-exit-node )
+            [[ -n "${TAILSCALE_ADVERTISE_ROUTES:-}" ]] && args+=( --advertise-routes="$TAILSCALE_ADVERTISE_ROUTES" )
+            [[ -n "${TAILSCALE_EXTRA_ARGS:-}" ]]      && args+=( ${TAILSCALE_EXTRA_ARGS} )
+
+            echo "Running: tailscale up --auth-key=<redacted> --hostname=$TS_HOST [...]"
+            ts_out="$(tailscale "${args[@]}" 2>&1)" && ts_rc=0 || ts_rc=$?
+            [[ -n "$ts_out" ]] && echo "$ts_out"
+
+            if (( ts_rc == 0 )); then
+                sed -i -E 's|^TAILSCALE_AUTHKEY=.*|TAILSCALE_AUTHKEY=""|' "$ENV_FILE"
+                printf '[STATUS] ok|tailscale up|joined as %s\n' "$TS_HOST"
+                ts_v4=$(tailscale ip -4 2>/dev/null | head -1)
+                ts_dns=$(tailscale status --self --json 2>/dev/null \
+                    | grep -oP '"DNSName":\s*"\K[^"]+' | head -1)
+                echo
+                echo "✓ Joined tailnet:"
+                [[ -n "$ts_dns" ]] && echo "    DNS:  $ts_dns"
+                [[ -n "$ts_v4" ]]  && echo "    IPv4: $ts_v4"
+                echo "    SSH:  ssh ${VPS_USER}@${ts_dns:-${ts_v4:-<host>}}"
+            else
+                printf '[STATUS] fail|tailscale up|exit %d\n' "$ts_rc"
+                echo
+                echo "ERROR: 'tailscale up' failed (exit $ts_rc). Common causes:"
+                echo "  - auth key expired / already used / single-use"
+                echo "  - tag in --advertise-tags not in tagOwners (tailscale.json)"
+                echo "  - auth key generated with a different tag set than requested"
+                echo "  - controlplane unreachable (firewall blocking *.tailscale.com:443)"
+                echo "  - existing state conflicts; try: sudo tailscale logout, then re-run"
+                echo
+                echo "  Generate a fresh key: https://login.tailscale.com/admin/settings/keys"
+            fi
+        else
+            printf '[STATUS] warn|tailscale up|no TAILSCALE_AUTHKEY; tailscaled installed but not joined\n'
+            echo
+            echo "tailscaled is installed but not joined."
+            echo "Generate a key: https://login.tailscale.com/admin/settings/keys"
+            echo "Then: sudo tailscale up --auth-key=<key>"
+        fi
+    else
+        echo "WARN: tailscale binary missing after install attempt; skipping tailscale up"
     fi
 fi
 
