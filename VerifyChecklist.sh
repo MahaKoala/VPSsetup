@@ -115,10 +115,24 @@ if ! command -v sshd >/dev/null; then
 elif (( EUID_NOW != 0 )); then
     warn "sshd -T requires root — re-run with sudo to inspect effective config"
 else
-    SSHD_T=$(sshd -T 2>/dev/null || true)
-    if [[ -z "$SSHD_T" ]]; then
-        fail "sshd -T returned nothing (config error?)"
+    # Capture both stdout and stderr so we can show the actual error if it
+    # fails — `2>/dev/null` would mask a useful diagnostic.
+    SSHD_T_RAW=$(sshd -T 2>&1)
+    sshd_rc=$?
+    if (( sshd_rc != 0 )); then
+        fail "sshd -T failed (exit $sshd_rc) — output below:"
+        echo "$SSHD_T_RAW" | head -8 | sed 's/^/      /'
+        note "Try: sudo sshd -T   (interactive, full output)"
+        note "     sudo sshd -t   (syntax check only)"
+        note "     sudo ssh-keygen -A   (regenerate missing host keys)"
+        SSHD_T=""
+    elif [[ -z "$SSHD_T_RAW" ]]; then
+        fail "sshd -T returned empty output"
+        SSHD_T=""
     else
+        SSHD_T="$SSHD_T_RAW"
+    fi
+    if [[ -n "$SSHD_T" ]]; then
         get_sshd() { echo "$SSHD_T" | grep -i "^$1 " | head -1 | awk '{print $2}'; }
 
         eff_port=$(get_sshd port)
@@ -198,7 +212,8 @@ else
             warn "tailscale0 not in ufw — tailnet SSH won't work"
         fi
     else
-        fail "ufw is installed but not active"
+        fail "ufw is installed but not active — re-run 'sudo /usr/local/sbin/vps-harden.sh'"
+        note "(common when a previous harden run aborted before §3 UFW; harden is idempotent and safe to re-run)"
     fi
 fi
 
