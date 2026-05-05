@@ -75,6 +75,9 @@ esac
 : "${TAILSCALE_EXTRA_ARGS:=--accept-routes}"
 
 : "${INSTALL_TOOLS:=0}"
+# Optional: install vpsview (TUI VPS dashboard, Charm/Bubbletea). Adds ~60s
+# Go compile to the run; off by default. Set to 1 to opt in.
+: "${INSTALL_VPSVIEW:=0}"
 # tmuxai is configured with multi-provider model presets. Provide whichever
 # API keys you have; the config gets one entry per available provider × tier
 # (best / fast / cheap). All three blank → config still written with just the
@@ -208,6 +211,14 @@ if (( INTERACTIVE )); then
         && INSTALL_TOOLS=1 || INSTALL_TOOLS=0
 
     if (( INSTALL_TOOLS )); then
+        hdr "vpsview (TUI VPS dashboard, optional)"
+        echo "  vpsview is a Charm/Bubbletea TUI: live CPU/MEM/DISK gauges,"
+        echo "  60s history sparklines, listening ports, disks table, and"
+        echo "  detected AI CLIs. Adds ~60s to install (Go compile)."
+        ask_yn "Install vpsview?" "n" \
+            && INSTALL_VPSVIEW=1 || INSTALL_VPSVIEW=0
+        echo
+
         hdr "tmuxai (AI in tmux) configuration"
         cat <<'EOF'
 The config will include 3 named model presets per provider you enable
@@ -258,6 +269,7 @@ EOF
   harden      : $([[ $RUN_HARDEN == 1 ]] && echo yes || echo no)
   http/https  : $([[ $ALLOW_HTTP_HTTPS == 1 ]] && echo open || echo closed)
   ai tools    : $([[ $INSTALL_TOOLS == 1 ]] && echo yes || echo no)
+  vpsview     : $([[ $INSTALL_VPSVIEW == 1 ]] && echo yes || echo no)
 EOF
     echo
     ask_yn "Proceed?" "y" || { echo "Aborted."; exit 1; }
@@ -1223,6 +1235,21 @@ if [[ -n "$USER_HOME" ]]; then
     done
 fi
 
+# Optional: vpsview (TUI dashboard) — opt-in via INSTALL_VPSVIEW=1
+if [[ "${INSTALL_VPSVIEW:-0}" == "1" ]]; then
+    echo "--- vpsview (TUI dashboard) ---"
+    if command -v vpsview &>/dev/null; then
+        printf '[STATUS] ok|vpsview|already installed\n'
+    elif sudo -Hu "$VPS_USER" bash -c '
+        cd "$HOME"
+        curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/install-vpsview.sh | bash
+    '; then
+        printf '[STATUS] ok|vpsview|installed\n'
+    else
+        printf '[STATUS] warn|vpsview|installer failed\n'
+    fi
+fi
+
 # Ollama runs as a system daemon, not under $VPS_USER
 echo "--- Ollama (system daemon) ---"
 if command -v ollama &>/dev/null; then
@@ -1270,8 +1297,8 @@ fi
 if [[ "${INSTALL_TOOLS}" == "1" ]]; then
     echo
     echo "$(c '1;32' '▶ Running vps-tools.sh')"
-    # Propagate provider keys to the tools script; cleared after run.
-    export OPENROUTER_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY
+    # Propagate provider keys + vpsview opt-in; cleared after run.
+    export OPENROUTER_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY INSTALL_VPSVIEW
     /usr/local/sbin/vps-tools.sh
     unset OPENROUTER_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY
 fi

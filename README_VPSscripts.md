@@ -8,6 +8,7 @@ A complete, idempotent provisioning system designed for Hetzner (and any cloud-i
 - **`vps-harden.sh`** — SSH hardening, UFW, fail2ban, unattended-upgrades, sysctl, Tailscale
 - **`vps-tools.sh`** *(optional)* — AI/CLI tools (opencode, crush, codex, claude-code, ollama, lazygit, etc.)
 - **`VerifyChecklist.sh`** — post-deploy audit (sshd config, authorized_keys, UFW, fail2ban, Tailscale, brew, listening ports)
+- **`install-vpsview.sh`** *(optional)* — build & install [vpsview](install-vpsview.sh), a Charm/Bubbletea TUI dashboard. Standalone installer; works for any user with sudo. Or opt in via `INSTALL_VPSVIEW=1` during `vps-init.sh`.
 - **`/etc/vps/bootstrap.env`** — single source of truth for all scripts
 
 Layout:

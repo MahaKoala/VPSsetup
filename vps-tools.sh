@@ -339,6 +339,27 @@ if [[ -n "$USER_HOME" ]]; then
     done
 fi
 
+# Optional: install vpsview (TUI VPS dashboard). Opt-in via env var so the
+# default tools install isn't slowed by the ~60s Go compile. Runs the same
+# install-vpsview.sh that any user can run standalone.
+if [[ "${INSTALL_VPSVIEW:-0}" == "1" ]]; then
+    echo "--- vpsview (TUI dashboard) ---"
+    if command -v vpsview &>/dev/null; then
+        printf '[STATUS] ok|vpsview|already installed\n'
+    else
+        # Run as the VPS user so the workspace lands in their ~/.local/src;
+        # the installer sudos for apt + binary install (we're root, no prompt).
+        if sudo -Hu "$VPS_USER" bash -c '
+            cd "$HOME"
+            curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/install-vpsview.sh | bash
+        '; then
+            printf '[STATUS] ok|vpsview|installed\n'
+        else
+            printf '[STATUS] warn|vpsview|installer failed\n'
+        fi
+    fi
+fi
+
 # Ollama runs as a system daemon, not under $VPS_USER
 echo "--- Ollama (system daemon) ---"
 if command -v ollama &>/dev/null; then

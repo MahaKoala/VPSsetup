@@ -154,6 +154,24 @@ ranger, zoxide, btop, chafa, csvlens, tmuxai, tpm. Adds 5–10 minutes.
 Install AI/agent tooling after hardening? [y/N]                        ← y if you want it
 ```
 
+### vpsview — TUI dashboard (optional, only if INSTALL_TOOLS=y)
+
+```
+── vpsview (TUI VPS dashboard, optional) ──
+  vpsview is a Charm/Bubbletea TUI: live CPU/MEM/DISK gauges,
+  60s history sparklines, listening ports, disks table, and
+  detected AI CLIs. Adds ~60s to install (Go compile).
+Install vpsview? [y/N]                                                  ← y to enable
+```
+
+If you skip it here, you can install standalone any time as any user:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/install-vpsview.sh)
+```
+
+Then run `vpsview` from any account; binary lives at `/usr/local/bin/vpsview`. Press `q` to quit, `?` for help, `r` to refresh.
+
 ### Review
 
 ```

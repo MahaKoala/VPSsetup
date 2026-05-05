@@ -247,6 +247,7 @@ ssh root@<server-ip> "curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPS
 | Var | What it does |
 |---|---|
 | `INSTALL_TOOLS=1` | Add the AI/agent tooling step (opencode, crush, codex, claude-code, ollama, lazygit, etc.). Default `0`. Interactive wizard prompts for it explicitly. |
+| `INSTALL_VPSVIEW=1` | Build & install [vpsview](install-vpsview.sh) — a Charm/Bubbletea TUI dashboard showing live CPU/MEM/DISK gauges, network sparklines, listening ports, disks, and detected AI CLIs. Adds ~60 s to the run (Go compile). Default `0`. Interactive wizard prompts. Install standalone any time: `bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/install-vpsview.sh)` |
 | `RUN_VERIFY=1` | Run `VerifyChecklist.sh` at the end. Default off for non-interactive; interactive runs always prompt. |
 | `TAILSCALE_TAGS=…` | Override the tags advertised on `tailscale up`. **Leave unset** to use whatever tags the auth key was generated with — overriding requires every tag be in `tagOwners` AND within the key's allowed set, which is the most common cause of silent join failures. |
 
