@@ -234,12 +234,16 @@ ssh root@<server-ip> "curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPS
   SSH_ID=mahakoala \
   VPS_ROLE=staging \
   TAILSCALE_AUTHKEY=tskey-auth-xxxxxxxxxxxx \
-  TAILSCALE_TAGS=tag:vps,tag:staging \
   INSTALL_TOOLS=1 \
+  RUN_VERIFY=1 \
   NONINTERACTIVE=1 bash"
 ```
 
-`INSTALL_TOOLS=1` adds the AI/agent tooling step (opencode, crush, codex, claude-code, ollama, lazygit, etc.); leave it at `0` (default) for a minimal install. The interactive wizard prompts for it explicitly.
+| Var | What it does |
+|---|---|
+| `INSTALL_TOOLS=1` | Add the AI/agent tooling step (opencode, crush, codex, claude-code, ollama, lazygit, etc.). Default `0`. Interactive wizard prompts for it explicitly. |
+| `RUN_VERIFY=1` | Run `VerifyChecklist.sh` at the end. Default off for non-interactive; interactive runs always prompt. |
+| `TAILSCALE_TAGS=…` | Override the tags advertised on `tailscale up`. **Leave unset** to use whatever tags the auth key was generated with — overriding requires every tag be in `tagOwners` AND within the key's allowed set, which is the most common cause of silent join failures. |
 
 All [bootstrap.env](bootstrap.env) variables can be passed this way. Anything you don't set falls back to the defaults baked into `vps-init.sh`.
 
@@ -281,22 +285,70 @@ It reads the existing `/etc/vps/bootstrap.env` to find `VPS_USER` and installs e
 
 Paste the contents of [cloud-init.yaml](cloud-init.yaml) into the provider's **User Data** / **Cloud Config** field at server creation time. Everything happens on first boot before you ever SSH in. Edit the inline `bootstrap.env` block in the YAML to set your `VPS_USER`, `SSH_ID`, `TAILSCALE_AUTHKEY`, etc.
 
+### End-of-install report
+
+After bootstrap → harden → tools, `vps-init.sh` parses `[STATUS]` lines from `/var/log/vps-bootstrap.log` and prints a tally:
+
+```
+── Install report ──
+  ✓ ok:   24
+  ! warn: 2
+  ✗ fail: 1
+
+Warnings:
+  ! brew bun                         (install failed)
+  ! tmuxai                           (installer failed)
+
+Failures:
+  ✗ tailscale up                     (exit 1)
+
+How to retry individual items:
+  brew package          → sudo -u maha bash -lc 'brew install <pkg>'
+  npm package           → sudo -u maha bash -lc 'npm i -g <pkg>'
+  claude-code           → sudo -u maha bash -lc 'curl -fsSL https://claude.ai/install.sh | bash'
+  tailscale             → sudo tailscale up --auth-key=<new-key>
+  full log              → less /var/log/vps-bootstrap.log
+```
+
+Each install step (per-package brew, per-tap, npm, curl-installers, tailscale up, etc.) emits one structured `[STATUS] <ok|warn|fail>|<step>|<detail>` line into the shared log, so the report shows you exactly what worked, what failed, and a copy-pasteable retry command for each category.
+
 ### Verify the result
 
 ```bash
-# As root or your new user:
-bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/VerifyChecklist.sh)
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/VerifyChecklist.sh)
 ```
 
-This prints hostname/OS, effective `sshd` config, per-user `authorized_keys` counts, UFW rules, fail2ban status, unattended-upgrades, Tailscale status, Homebrew sanity, and listening ports — one consolidated audit you can read top-to-bottom.
+`vps-init.sh` already prompts to run this at the end of every install (interactive runs); for non-interactive runs, opt in with `RUN_VERIFY=1`.
+
+The verify script does a full audit: hostname/OS, disk space (warns under 2GB, fails under 500MB), effective `sshd -T` config (per-key validated, not just dumped), per-user `authorized_keys`, UFW status + SSH-path verification, fail2ban jail counts, unattended-upgrades, Tailscale connectivity (interface + peers + self IP), per-user Homebrew, and login-shell PATH resolution for `claude`, `eza`, `bat`, `gh`, `node`, etc. (catches the *"installed but not in PATH"* class of regression).
+
+It tracks each check as **ok / warn / fail**, prints a 3-line tally + verdict, and **exits non-zero if any check failed** — so you can run it from cron or CI:
+
+```
+── Verify summary ──
+  ✓ ok:   18
+  ! warn: 2
+  ✗ fail: 0
+
+Result: PASS with warnings — review ! items, decide if action needed.
+```
+
+Useful flags:
+
+| Flag | Effect |
+|---|---|
+| `--quiet` / `-q` | Suppress `ok` lines and section headers; only print warnings, failures, summary. Cron-friendly |
+| `--report` / `-r` | Print only the install `[STATUS]` tally from `/var/log/vps-bootstrap.log` and exit. Lets you re-check what failed during the original deploy weeks later |
+| `--help` / `-h` | Usage |
 
 You should see, among other things:
 
 - `Status: active` from UFW
-- A `tailscale0` interface in `tailnet ALLOW Anywhere` rules
-- `tailscale status` showing your tailnet peers
+- A `tailscale0 ALLOW` rule in `ufw status`
+- `tailscale status` showing your tailnet peers and a `tailscale0` IP on the interface
 - `PermitRootLogin prohibit-password` (root SSH allowed by key only — recovery hatch)
 - `AllowUsers <your-user> root` in `sshd -T`
+- `Result: PASS` (or `PASS with warnings`)
 
 ### Connect with your real user
 
@@ -386,7 +438,11 @@ These are points worth being explicit about:
 - **Public SSH lockdown:** automated via `PUBLIC_SSH_ALLOWED=0` on a second run, gated on Tailscale actually being up *and* the `tailscale0 … ALLOW` rule being visible in `ufw status` before the public rule is removed — never blindly during first boot.
 - **Hostname generation:** prefer Hetzner metadata `instance-id` when available (deterministic, traceable), fall back to `/etc/machine-id`, then to random bytes. Format: `<prefix>-<role>-<id>` so role is encoded in the device name.
 - **Username collision:** explicitly refuse `root`, `linuxbrew`, or any existing system user with UID < 1000 to avoid clobbering the Linuxbrew install user.
-- **AI tooling installer paths:** brew taps where they exist (`opencode`, `crush`); `npm i -g @openai/codex` for Codex (no Linux brew formula); `claude.ai/install.sh` for Claude Code (no Linux cask). Failed installs `|| true` through so one broken upstream doesn't fail the whole tools run.
+- **AI tooling installer paths:** brew taps where they exist (`opencode`, `crush`); `npm i -g @openai/codex` for Codex (no Linux brew formula); `claude.ai/install.sh` for Claude Code (no Linux cask). Failed installs do not abort the rest of the tools step — each step emits a `[STATUS] warn` line so the operator sees what broke.
+- **Structured `[STATUS]` install protocol.** Every install attempt emits one line per step: `[STATUS] <ok|warn|fail>|<step>|<detail>`. Per-package brew loops, per-tap install attempts, npm/curl-installers, tailscale up, and ollama daemon all emit these. The format is human-readable in the log AND `grep|awk`-able for the end-of-install report. No more silent batch failures like *"some terminal tools failed"* (which doesn't say which ones).
+- **End-of-install report in `vps-init.sh`.** After all worker scripts complete, parses `/var/log/vps-bootstrap.log` for `[STATUS]` lines and prints a 3-line tally (ok / warn / fail) + the explicit list of warnings and failures + copy-pasteable retry recipes for each category. So the operator doesn't scroll back through 1000+ lines of brew output to find what broke.
+- **`~/.local/bin` in user PATH.** Claude Code, pipx, and several other Linux installers drop binaries here, but it's not on PATH by default. `vps-bootstrap.sh` writes an idempotent guard (`case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH=…;; esac`) into `~/.profile` and `~/.bashrc`. `vps-tools.sh` re-asserts the line after Claude install — defense in depth. `[ -d "$HOME/.local/bin" ] &&` guard means non-existent dirs don't pollute PATH on a fresh box.
+- **`VerifyChecklist.sh` as a real audit tool.** Counted, color-coded, exit-coded. Each check goes through `ok`/`warn`/`fail` helpers that tally; final summary prints `Result: PASS / PASS with warnings / FAIL` and exits non-zero on any failure (cron- and CI-usable). Has `--quiet` (only show exceptions), `--report` (only print last install's `[STATUS]` tally), and `--help` flags. Validates each `sshd -T` field individually; verifies tailscale0 interface is up *and* has an IP; spot-checks login-shell PATH resolution for the tools we expect to be available (`claude`, `eza`, `bat`, etc.) — catches the *"installed but not in PATH"* regression.
 
 ---
 

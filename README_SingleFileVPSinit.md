@@ -2,7 +2,7 @@
 # Single-File VPS Init Script (Works Anywhere)
 
 Quickstart:
-ssh -t root@<ip> "bash <(curl -fsSL https://raw.githubusercontent.com/<you>/<repo>/main/vps-init.sh)"
+ssh -t root@<ip> "bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)"
 
 Already in SSH:
 bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)
@@ -31,6 +31,8 @@ ssh root@<ip> "
   SSH_ID=mahakoala \
   VPS_ROLE=staging \
   TAILSCALE_AUTHKEY=tskey-auth-xxx \
+  INSTALL_TOOLS=1 \
+  RUN_VERIFY=1 \
   NONINTERACTIVE=1 \
   bash -s
 " < vps-init.sh
@@ -38,11 +40,22 @@ ssh root@<ip> "
 
 The script is a single self-contained file that:
 
-1. Prompts interactively (or reads env vars in `NONINTERACTIVE=1` mode)
-2. Writes `/etc/vps/bootstrap.env`
-3. Writes `/usr/local/sbin/vps-bootstrap.sh` and `/usr/local/sbin/vps-harden.sh` as embedded heredocs
-4. Runs both
-5. Leaves everything on disk so you can re-run `vps-bootstrap.sh` or `vps-harden.sh` later without re-downloading
+1. Prompts interactively (or reads env vars in `NONINTERACTIVE=1` mode)
+2. Writes `/etc/vps/bootstrap.env`
+3. Writes `/usr/local/sbin/vps-bootstrap.sh`, `/usr/local/sbin/vps-harden.sh`, and `/usr/local/sbin/vps-tools.sh` as embedded heredocs
+4. Runs bootstrap + harden, plus vps-tools (only if `INSTALL_TOOLS=1`)
+5. Prints an end-of-install report — tally of `[STATUS] ok / warn / fail` lines from the log, plus per-step warnings and failures with copy-pasteable retry recipes
+6. Optionally runs `VerifyChecklist.sh` (interactive runs prompt; non-interactive runs opt in via `RUN_VERIFY=1`)
+7. Leaves everything on disk so you can re-run any worker script later without re-downloading
+
+### Opt-in env vars
+
+| Var | Default | What it does |
+|---|---|---|
+| `INSTALL_TOOLS` | `0` | Install AI/agent tooling (opencode, crush, codex, claude-code, ollama, lazygit, etc.) after harden |
+| `RUN_VERIFY` | unset | When non-interactive, set to `1` to run `VerifyChecklist.sh` at the end. Interactive runs always prompt regardless |
+| `RUN_HARDEN` | `1` | Run hardening after bootstrap. Set `0` to skip (e.g. testing on a non-public box) |
+| `TAILSCALE_TAGS` | unset | Override tags advertised on `tailscale up`. **Leave unset** to use whatever tags the auth key was generated with — overriding requires every tag be in `tagOwners` AND within the key's allowed set |
 
 ---
 
@@ -60,7 +73,7 @@ ssh root@<ip>
 bash /root/vps-init.sh
 ```
 
-The wizard walks through user, hostname, SSH key sources, Tailscale auth key, and hardening. Everything is printed for review before anything is changed.
+The wizard walks through user, hostname, SSH key sources, Tailscale auth key, hardening, and AI tooling. Everything is printed for review before anything is changed.
 
 ```
 ssh root@<ip> "
@@ -69,20 +82,21 @@ ssh root@<ip> "
   VPS_ROLE=staging \
   VPS_HOSTNAME_PREFIX=koala \
   TAILSCALE_AUTHKEY=tskey-auth-xxxxxxxxxxxx \
-  TAILSCALE_TAGS=tag:vps,tag:staging \
+  INSTALL_TOOLS=1 \
+  RUN_VERIFY=1 \
   NONINTERACTIVE=1 \
   bash -s
 " < vps-init.sh
 ```
 
-Once `vps-init.sh` lives in a repo:
+Once `vps-init.sh` lives in a repo:
 
 ```
 ssh root@<ip> "curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh | \
   VPS_USER=pink SSH_ID=mahakoala TAILSCALE_AUTHKEY=tskey-... NONINTERACTIVE=1 bash"
 ```
 
-Or with interactive mode preserved (note the `</dev/tty`):
+Or with interactive mode preserved (note the `-t` for TTY allocation, so the wizard's prompts work over SSH):
 
 ```
 ssh -t root@<ip> "bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)"
@@ -103,13 +117,14 @@ bash /root/vps-init.sh
 
 |Path|Purpose|
 |---|---|
-|`/etc/vps/bootstrap.env`|Config; mode `0600` (contains Tailscale key until scrubbed)|
+|`/etc/vps/bootstrap.env`|Config; mode `0600` (contains Tailscale key until scrubbed)|
 |`/usr/local/sbin/vps-bootstrap.sh`|User, hostname, SSH keys, Homebrew, base tooling|
 |`/usr/local/sbin/vps-harden.sh`|SSH, UFW, fail2ban, unattended-upgrades, sysctl, Tailscale|
-|`/var/log/vps-bootstrap.log`|Combined log of all runs|
-|`/etc/profile.d/homebrew.sh`|System-wide `brew` on `PATH`|
+|`/usr/local/sbin/vps-tools.sh`|AI/agent tooling (opencode, crush, codex, claude-code, ollama, lazygit, etc.)|
+|`/var/log/vps-bootstrap.log`|Combined log of all runs, including `[STATUS]` lines parsed by the install report|
+|`/etc/profile.d/homebrew.sh`|System-wide `brew` on `PATH` (with `cd "$HOME"` guard for the Linuxbrew CWD bug)|
 |`/etc/sudoers.d/90-<user>`|Passwordless sudo for your user|
-|`/etc/ssh/sshd_config.d/99-vps-hardening.conf`|SSH drop-in|
+|`/etc/ssh/sshd_config.d/99-vps-hardening.conf`|SSH drop-in (with `*.bak` snapshot if a previous version existed)|
 
 ---
 
@@ -122,32 +137,69 @@ Every piece is idempotent:
 sudo nano /etc/vps/bootstrap.env
 sudo /usr/local/sbin/vps-bootstrap.sh
 
+# Refresh / install AI tooling:
+sudo /usr/local/sbin/vps-tools.sh
+
 # Tighten firewall to tailnet-only after verifying Tailscale works:
 sudo sed -i 's/^PUBLIC_SSH_ALLOWED=.*/PUBLIC_SSH_ALLOWED="0"/' /etc/vps/bootstrap.env
 sudo /usr/local/sbin/vps-harden.sh
 ```
 
+The harden script's safety guards (UFW lockout gate, sshd drop-in rollback on validation failure, `reload` instead of `restart` so existing sessions survive) all apply on every re-run.
+
+---
+
+## End-of-install report
+
+After bootstrap → harden → tools, `vps-init.sh` parses `[STATUS]` lines from `/var/log/vps-bootstrap.log` and prints:
+
+```
+── Install report ──
+  ✓ ok:   24
+  ! warn: 2
+  ✗ fail: 1
+
+Warnings:
+  ! brew bun                         (install failed)
+  ! tmuxai                           (installer failed)
+
+Failures:
+  ✗ tailscale up                     (exit 1)
+
+How to retry individual items:
+  brew package          → sudo -u maha bash -lc 'brew install <pkg>'
+  npm package           → sudo -u maha bash -lc 'npm i -g <pkg>'
+  claude-code           → sudo -u maha bash -lc 'curl -fsSL https://claude.ai/install.sh | bash'
+  tailscale             → sudo tailscale up --auth-key=<new-key>
+  full log              → less /var/log/vps-bootstrap.log
+```
+
+Every install attempt across the worker scripts emits one structured line per step (`[STATUS] <ok|warn|fail>|<step>|<detail>`), so the report shows you exactly what worked, what failed, and the recipe to retry each category. No more silent batch failures like *"some terminal tools failed"* without specifying which ones.
+
 ---
 
 ## Verification
 
+`vps-init.sh` prompts at the end (interactive runs) or runs unattended with `RUN_VERIFY=1` (non-interactive). You can also run it on demand:
+
 ```
-ssh pink@<ip>
-hostnamectl
-brew doctor
-tailscale status
-sudo ufw status verbose
-sudo fail2ban-client status sshd
-systemctl status unattended-upgrades
-tail -n 100 /var/log/vps-bootstrap.log
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/VerifyChecklist.sh)
 ```
+
+Useful flags:
+
+- `--quiet` / `-q` — only print warnings, failures, and the final summary (cron/CI-friendly)
+- `--report` / `-r` — only print the install `[STATUS]` tally from `/var/log/vps-bootstrap.log` and exit
+- `--help`
+
+Each check goes through `ok`/`warn`/`fail` helpers that tally; final verdict prints `Result: PASS / PASS with warnings / FAIL` and the script exits non-zero if any check failed. Validates each `sshd -T` field individually, checks UFW SSH paths, verifies `tailscale0` is up *and* has an IP, spot-checks login-shell PATH resolution for `claude` / `eza` / `bat` / etc. — catches the "installed but not in PATH" regression.
 
 ---
 
 ## One caveat worth calling out
 
-When you paste or `scp` this script, the Tailscale authkey (if supplied) will be written to `/etc/vps/bootstrap.env` at mode `600`. The harden script **scrubs it after successful `tailscale up`**, but:
+When you paste or `scp` this script, the Tailscale authkey (if supplied) will be written to `/etc/vps/bootstrap.env` at mode `600`. The harden script **scrubs it after successful `tailscale up`**, but:
 
-- If you take a VPS snapshot _before_ the first successful `tailscale up`, the key is in the snapshot.
-- Prefer **ephemeral** + **tagged** + **reusable-off** auth keys from the Tailscale admin console, expiring in 1 hour. That way even a leaked key is worthless.
-
+- If you take a VPS snapshot _before_ the first successful `tailscale up`, the key is in the snapshot.
+- Prefer **ephemeral** + **tagged** + **reusable-off** auth keys from the Tailscale admin console, expiring in 1 hour. That way even a leaked key is worthless.
+- The tag(s) chosen at key generation MUST already be in `tagOwners` in your `tailscale.json` ACL. The script does NOT pass `--advertise-tags` by default — it lets the key's own tags speak for themselves, which is the safe path. Set `TAILSCALE_TAGS` only if you specifically want to override (and every tag is in `tagOwners`).
