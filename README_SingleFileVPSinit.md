@@ -178,6 +178,53 @@ Every install attempt across the worker scripts emits one structured line per st
 
 ---
 
+## Tailscale wizard
+
+When the wizard reaches the Tailscale step, it explicitly tells you where to generate a key and accepts both paste forms:
+
+```
+── Tailscale ──
+Install Tailscale? [Y/n]
+
+  Generate an auth key in the Tailscale admin:
+    https://login.tailscale.com/admin/settings/keys
+  Recommended: ephemeral + tagged (e.g. tag:vps) + 1-hour expiry.
+  Make sure every tag you choose exists in tagOwners in your tailscale.json.
+
+  Paste EITHER:
+    (a) the auth key alone:    tskey-auth-XXXXXXXXXXXXXX
+    (b) the full install line: curl -fsSL ... | sh && sudo tailscale up --auth-key=tskey-auth-XXX
+  (the wizard will extract the key from (b) automatically)
+```
+
+So you can copy the literal install line Tailscale's admin web shows you and paste it into the wizard — the `--auth-key=…` portion is extracted automatically. Both `--auth-key` and the older `--authkey` forms are recognised. A sanity check warns if what you pasted doesn't start with `tskey-`.
+
+After successful `tailscale up`, the script prints a clean "joined" summary:
+
+```
+✓ Joined tailnet:
+    DNS:    dev-deployeddigital-abc12345.tailXXXX.ts.net
+    IPv4:   100.123.45.67
+    IPv6:   fd7a:115c:a1e0::1234
+    SSH:    ssh maha@dev-deployeddigital-abc12345.tailXXXX.ts.net
+```
+
+So you don't have to parse raw `tailscale status` to find the tailnet hostname.
+
+---
+
+## SSH-hardening robustness
+
+The harden step has several guards against the common Ubuntu 24.04 footguns that have bitten earlier runs:
+
+- **Mask `ssh.socket`** instead of just disabling — `disable --now` symlinks can be re-created by package operations; `mask` makes the unit a `/dev/null` symlink that survives apt.
+- **Create `/run/sshd`** before `sshd -t`. The privsep dir is a tmpfs ephemeral and `sshd -t` runs before `ssh.service`'s `RuntimeDirectory=sshd` materialises it.
+- **Smart `reload`-or-`start`**: SIGHUP if `ssh.service` is already active (preserves existing sessions for the operator), `start` on first transition off `ssh.socket`. On failure, prints `systemctl status` + last 25 journal lines + port listeners + three concrete remediation commands.
+- **Orphan-listener cleanup**. `KillMode=process` on `ssh.service` leaves the master `sshd` listener alive after a failed start, blocking the next start with `Address already in use`. The script kills any process bound to `SSH_PORT` whose cmdline contains `[listener]` (per-connection sshds carrying live SSH sessions don't have that marker, so this is safe even from inside an SSH session) and runs `systemctl reset-failed ssh.service`.
+- **Defaults block** for every optional `bootstrap.env` var, so partial / older env files don't trip `set -u` with `<var>: unbound variable`.
+
+---
+
 ## Verification
 
 `vps-init.sh` prompts at the end (interactive runs) or runs unattended with `RUN_VERIFY=1` (non-interactive). You can also run it on demand:
