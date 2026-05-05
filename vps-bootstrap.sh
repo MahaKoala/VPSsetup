@@ -211,9 +211,11 @@ EOF
           eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
           for pkg in $BREW_PACKAGES; do
             if brew list --formula "$pkg" >/dev/null 2>&1; then
-              echo "ok: $pkg"
+              printf "[STATUS] ok|brew %s|already installed\n" "$pkg"
+            elif brew install "$pkg"; then
+              printf "[STATUS] ok|brew %s|installed\n" "$pkg"
             else
-              brew install "$pkg" || echo "WARN: failed $pkg"
+              printf "[STATUS] warn|brew %s|install failed\n" "$pkg"
             fi
           done
         '

@@ -22,6 +22,11 @@ source "$ENV_FILE"
 [[ -n "${VPS_USER:-}" ]] || { echo "VPS_USER not set in $ENV_FILE"; exit 1; }
 id -u "$VPS_USER" &>/dev/null || { echo "User $VPS_USER does not exist; run vps-bootstrap.sh first"; exit 1; }
 
+# Tee output into the shared log so the end-of-install report (in vps-init.sh)
+# can parse [STATUS] lines from this run too.
+LOG=/var/log/vps-bootstrap.log
+exec > >(tee -a "$LOG") 2>&1
+
 echo "===== vps-tools @ $(date -Is) ====="
 echo "Installing AI/agent tooling for user: $VPS_USER"
 
@@ -36,56 +41,95 @@ sudo -Hu "$VPS_USER" bash -l -s <<'INNER_EOF'
 set +e   # don't abort the whole tools run if one upstream is flaky
 cd "$HOME"
 
+# [STATUS] kind|step|detail — parsed by vps-init.sh's end-of-install report
+_st() { printf '[STATUS] %s|%s|%s\n' "$1" "$2" "${3:-}"; }
+
 if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
     eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 
     echo "--- code agents (brew taps) ---"
-    brew install sst/tap/opencode      || echo "WARN: opencode failed"
-    brew install charmbracelet/tap/crush || echo "WARN: crush failed"
+    for tap_pkg in sst/tap/opencode charmbracelet/tap/crush; do
+        pkg_short="${tap_pkg##*/}"
+        if brew list "$pkg_short" >/dev/null 2>&1; then
+            _st ok "$pkg_short" "already installed"
+        elif brew install "$tap_pkg"; then
+            _st ok "$pkg_short" "installed via tap"
+        else
+            _st warn "$pkg_short" "tap install failed"
+        fi
+    done
 
     echo "--- OpenAI Codex CLI ---"
     if command -v npm >/dev/null; then
-        npm i -g @openai/codex || echo "WARN: @openai/codex npm install failed"
+        if npm i -g @openai/codex; then
+            _st ok "@openai/codex" "installed via npm"
+        else
+            _st warn "@openai/codex" "npm install failed"
+        fi
     else
-        echo "WARN: npm not found; skipping @openai/codex"
+        _st warn "@openai/codex" "npm not found; skipped"
     fi
 
     echo "--- Anthropic Claude Code ---"
-    curl -fsSL https://claude.ai/install.sh | bash || echo "WARN: claude-code install failed"
+    if curl -fsSL https://claude.ai/install.sh | bash; then
+        _st ok "claude-code" "installed"
+    else
+        _st warn "claude-code" "installer failed"
+    fi
 
     echo "--- terminal niceties ---"
-    brew install lazygit glow ranger zoxide btop chafa csvlens || echo "WARN: some terminal tools failed"
+    for pkg in lazygit glow ranger zoxide btop chafa csvlens; do
+        if brew list --formula "$pkg" >/dev/null 2>&1; then
+            _st ok "brew $pkg" "already installed"
+        elif brew install "$pkg"; then
+            _st ok "brew $pkg" "installed"
+        else
+            _st warn "brew $pkg" "install failed"
+        fi
+    done
 else
-    echo "WARN: brew not found at /home/linuxbrew/.linuxbrew/bin/brew — skipping brew tools"
+    _st fail "brew" "not found at /home/linuxbrew/.linuxbrew/bin/brew — skipping all brew tools"
 fi
 
-# Ensure ~/.local/bin is in PATH so claude (and any other ~/.local/bin tool)
-# resolves in fresh shells. Idempotent: case-pattern skips when already present.
+# Ensure ~/.local/bin is in PATH (Claude Code installs there). Idempotent.
 LOCAL_BIN_LINE='[ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH";; esac'
 for rc in "$HOME/.profile" "$HOME/.bashrc"; do
     [ -f "$rc" ] || touch "$rc"
     grep -qxF "$LOCAL_BIN_LINE" "$rc" || printf '\n%s\n' "$LOCAL_BIN_LINE" >> "$rc"
 done
-# Also export for the rest of THIS heredoc's commands (so any post-install
-# verification can find claude / other ~/.local/bin tools).
 [ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"
 
 echo "--- tmuxai ---"
-curl -fsSL https://get.tmuxai.dev | bash || echo "WARN: tmuxai install failed"
+if curl -fsSL https://get.tmuxai.dev | bash; then
+    _st ok "tmuxai" "installed"
+else
+    _st warn "tmuxai" "installer failed"
+fi
 
 echo "--- tmux plugin manager ---"
-if [ ! -d "$HOME/.tmux/plugins/tpm" ]; then
-    git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm" \
-        || echo "WARN: tpm clone failed"
+if [ -d "$HOME/.tmux/plugins/tpm" ]; then
+    _st ok "tpm" "already cloned"
+elif git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"; then
+    _st ok "tpm" "cloned"
+else
+    _st warn "tpm" "git clone failed"
 fi
 INNER_EOF
 
 # Ollama runs as a system daemon, not under $VPS_USER
 echo "--- Ollama (system daemon) ---"
-if ! command -v ollama &>/dev/null; then
-    curl -fsSL https://ollama.com/install.sh | sh
+if command -v ollama &>/dev/null; then
+    printf '[STATUS] ok|ollama|already installed\n'
+elif curl -fsSL https://ollama.com/install.sh | sh; then
+    printf '[STATUS] ok|ollama|installed\n'
+else
+    printf '[STATUS] warn|ollama|installer failed\n'
 fi
-systemctl enable --now ollama || echo "WARN: could not enable ollama service"
+if systemctl enable --now ollama 2>/dev/null; then
+    printf '[STATUS] ok|ollama service|enabled\n'
+else
+    printf '[STATUS] warn|ollama service|could not enable\n'
+fi
 
 echo "===== vps-tools complete @ $(date -Is) ====="
 echo "Configure API keys in /etc/vps/secrets.env (mode 0600); source it from the user's .profile."

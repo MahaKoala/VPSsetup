@@ -415,9 +415,11 @@ cd "$HOME"
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 for pkg in $BREW_PACKAGES; do
     if brew list --formula "$pkg" >/dev/null 2>&1; then
-        echo "ok: $pkg"
+        printf "[STATUS] ok|brew %s|already installed\n" "$pkg"
+    elif brew install "$pkg"; then
+        printf "[STATUS] ok|brew %s|installed\n" "$pkg"
     else
-        brew install "$pkg" || echo "WARN: failed $pkg"
+        printf "[STATUS] warn|brew %s|install failed\n" "$pkg"
     fi
 done
 INNER_EOF
@@ -677,7 +679,9 @@ if bool "${INSTALL_TAILSCALE:-1}"; then
         [[ -n "$ts_out" ]] && echo "$ts_out"
         if (( ts_rc == 0 )); then
             sed -i -E 's|^TAILSCALE_AUTHKEY=.*|TAILSCALE_AUTHKEY=""|' "$ENV_FILE"
+            printf '[STATUS] ok|tailscale up|joined as %s\n' "$TS_HOST"
         else
+            printf '[STATUS] fail|tailscale up|exit %d\n' "$ts_rc"
             echo
             echo "ERROR: 'tailscale up' failed (exit $ts_rc). Common causes:"
             echo "  - auth key expired / already used / single-use"
@@ -687,7 +691,7 @@ if bool "${INSTALL_TAILSCALE:-1}"; then
         fi
         tailscale status || true
     else
-        echo "No TAILSCALE_AUTHKEY; tailscaled installed but not joined."
+        printf '[STATUS] warn|tailscale up|no TAILSCALE_AUTHKEY; tailscaled installed but not joined\n'
         echo "Join manually: sudo tailscale up --auth-key=<your-key>"
     fi
 fi
@@ -743,37 +747,63 @@ source "$ENV_FILE"
 [[ -n "${VPS_USER:-}" ]] || { echo "VPS_USER not set in $ENV_FILE"; exit 1; }
 id -u "$VPS_USER" &>/dev/null || { echo "User $VPS_USER does not exist"; exit 1; }
 
+# Tee into the shared log so vps-init.sh's end-of-install report sees [STATUS] lines
+LOG=/var/log/vps-bootstrap.log
+exec > >(tee -a "$LOG") 2>&1
+
 echo "===== vps-tools @ $(date -Is) ====="
 echo "Installing AI/agent tooling for: $VPS_USER"
 
-# Heredoc-via-stdin (NOT `bash -lc "$multi-line"`): some sudo/kernel combos
-# collapse newlines through argv, breaking compound statements. Stdin keeps
-# them intact. cd "$HOME" because brew refuses to start in an unreadable cwd.
 sudo -Hu "$VPS_USER" bash -l -s <<'INNER_EOF'
 set +e
 cd "$HOME"
+_st() { printf '[STATUS] %s|%s|%s\n' "$1" "$2" "${3:-}"; }
 
 if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
     eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 
     echo "--- code agents (brew taps) ---"
-    brew install sst/tap/opencode      || echo "WARN: opencode failed"
-    brew install charmbracelet/tap/crush || echo "WARN: crush failed"
+    for tap_pkg in sst/tap/opencode charmbracelet/tap/crush; do
+        pkg_short="${tap_pkg##*/}"
+        if brew list "$pkg_short" >/dev/null 2>&1; then
+            _st ok "$pkg_short" "already installed"
+        elif brew install "$tap_pkg"; then
+            _st ok "$pkg_short" "installed via tap"
+        else
+            _st warn "$pkg_short" "tap install failed"
+        fi
+    done
 
     echo "--- OpenAI Codex CLI ---"
     if command -v npm >/dev/null; then
-        npm i -g @openai/codex || echo "WARN: @openai/codex npm install failed"
+        if npm i -g @openai/codex; then
+            _st ok "@openai/codex" "installed via npm"
+        else
+            _st warn "@openai/codex" "npm install failed"
+        fi
     else
-        echo "WARN: npm not found; skipping @openai/codex"
+        _st warn "@openai/codex" "npm not found; skipped"
     fi
 
     echo "--- Anthropic Claude Code ---"
-    curl -fsSL https://claude.ai/install.sh | bash || echo "WARN: claude-code install failed"
+    if curl -fsSL https://claude.ai/install.sh | bash; then
+        _st ok "claude-code" "installed"
+    else
+        _st warn "claude-code" "installer failed"
+    fi
 
     echo "--- terminal niceties ---"
-    brew install lazygit glow ranger zoxide btop chafa csvlens || echo "WARN: some terminal tools failed"
+    for pkg in lazygit glow ranger zoxide btop chafa csvlens; do
+        if brew list --formula "$pkg" >/dev/null 2>&1; then
+            _st ok "brew $pkg" "already installed"
+        elif brew install "$pkg"; then
+            _st ok "brew $pkg" "installed"
+        else
+            _st warn "brew $pkg" "install failed"
+        fi
+    done
 else
-    echo "WARN: brew not found at /home/linuxbrew/.linuxbrew/bin/brew — skipping brew tools"
+    _st fail "brew" "not found at /home/linuxbrew/.linuxbrew/bin/brew — skipping brew tools"
 fi
 
 # Ensure ~/.local/bin is in PATH (Claude Code installs there)
@@ -785,20 +815,36 @@ done
 [ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"
 
 echo "--- tmuxai ---"
-curl -fsSL https://get.tmuxai.dev | bash || echo "WARN: tmuxai install failed"
+if curl -fsSL https://get.tmuxai.dev | bash; then
+    _st ok "tmuxai" "installed"
+else
+    _st warn "tmuxai" "installer failed"
+fi
 
 echo "--- tmux plugin manager ---"
-[ -d "$HOME/.tmux/plugins/tpm" ] || \
-    git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm" || \
-    echo "WARN: tpm clone failed"
+if [ -d "$HOME/.tmux/plugins/tpm" ]; then
+    _st ok "tpm" "already cloned"
+elif git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"; then
+    _st ok "tpm" "cloned"
+else
+    _st warn "tpm" "git clone failed"
+fi
 INNER_EOF
 
 # Ollama runs as a system daemon, not under $VPS_USER
 echo "--- Ollama (system daemon) ---"
-if ! command -v ollama &>/dev/null; then
-    curl -fsSL https://ollama.com/install.sh | sh
+if command -v ollama &>/dev/null; then
+    printf '[STATUS] ok|ollama|already installed\n'
+elif curl -fsSL https://ollama.com/install.sh | sh; then
+    printf '[STATUS] ok|ollama|installed\n'
+else
+    printf '[STATUS] warn|ollama|installer failed\n'
 fi
-systemctl enable --now ollama || echo "WARN: could not enable ollama service"
+if systemctl enable --now ollama 2>/dev/null; then
+    printf '[STATUS] ok|ollama service|enabled\n'
+else
+    printf '[STATUS] warn|ollama service|could not enable\n'
+fi
 
 echo "===== vps-tools done @ $(date -Is) ====="
 echo "API keys: drop them in /etc/vps/secrets.env (mode 0600), source from .profile."
@@ -829,6 +875,51 @@ echo
 echo "$(c '1;32' '═══════════════════════════════════════════════════')"
 echo "$(c '1;32' '  Done.')"
 echo "$(c '1;32' '═══════════════════════════════════════════════════')"
+
+# ---------- Install report ----------
+# Parse [STATUS] lines emitted by bootstrap/harden/tools and print a
+# consolidated tally + the warnings/failures up front so the operator
+# isn't expected to scroll back through 1000+ lines of brew output.
+LOG=/var/log/vps-bootstrap.log
+if [[ -r "$LOG" ]]; then
+    ok_n=$(grep -c '^\[STATUS\] ok|'   "$LOG" 2>/dev/null || true); ok_n=${ok_n:-0}
+    warn_n=$(grep -c '^\[STATUS\] warn|' "$LOG" 2>/dev/null || true); warn_n=${warn_n:-0}
+    fail_n=$(grep -c '^\[STATUS\] fail|' "$LOG" 2>/dev/null || true); fail_n=${fail_n:-0}
+
+    echo
+    echo "$(c '1;36' '── Install report ──')"
+    echo "  $(c '0;32' "✓ ok:")   $ok_n"
+    echo "  $(c '0;33' "! warn:") $warn_n"
+    echo "  $(c '0;31' "✗ fail:") $fail_n"
+
+    if (( warn_n > 0 )); then
+        echo
+        echo "$(c '1;33' 'Warnings:')"
+        grep '^\[STATUS\] warn|' "$LOG" | awk -F'|' '{
+            if ($3 != "") printf "  ! %-32s (%s)\n", $2, $3
+            else          printf "  ! %s\n", $2
+        }'
+    fi
+    if (( fail_n > 0 )); then
+        echo
+        echo "$(c '1;31' 'Failures:')"
+        grep '^\[STATUS\] fail|' "$LOG" | awk -F'|' '{
+            if ($3 != "") printf "  ✗ %-32s (%s)\n", $2, $3
+            else          printf "  ✗ %s\n", $2
+        }'
+    fi
+
+    if (( warn_n > 0 || fail_n > 0 )); then
+        echo
+        echo "$(c '2' "How to retry individual items:")"
+        echo "  brew package          → sudo -u $VPS_USER bash -lc 'brew install <pkg>'"
+        echo "  npm package           → sudo -u $VPS_USER bash -lc 'npm i -g <pkg>'"
+        echo "  claude-code           → sudo -u $VPS_USER bash -lc 'curl -fsSL https://claude.ai/install.sh | bash'"
+        echo "  tailscale             → sudo tailscale up --auth-key=<new-key>"
+        echo "  full log              → less /var/log/vps-bootstrap.log"
+    fi
+fi
+
 echo
 echo "Hostname : $(hostnamectl --static)"
 echo "User     : ${VPS_USER}"
@@ -848,4 +939,34 @@ if [[ "${PUBLIC_SSH_ALLOWED}" == "1" && "${INSTALL_TAILSCALE}" == "1" ]]; then
     echo "$(c '1;33' 'To lock SSH to Tailscale-only after verifying tailnet access:')"
     echo "  sudo sed -i 's/^PUBLIC_SSH_ALLOWED=.*/PUBLIC_SSH_ALLOWED=\"0\"/' /etc/vps/bootstrap.env"
     echo "  sudo /usr/local/sbin/vps-harden.sh"
+fi
+
+# ---------- Optional verification ----------
+# Offer to run VerifyChecklist.sh now. Interactive runs ask; non-interactive
+# can opt in via RUN_VERIFY=1 (or skip via RUN_VERIFY=0, the default).
+: "${RUN_VERIFY:=}"
+verify_url='https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/VerifyChecklist.sh'
+run_verify=0
+if (( INTERACTIVE )); then
+    echo
+    if ask_yn "Run VerifyChecklist.sh now to audit the install?" "y"; then
+        run_verify=1
+    fi
+elif [[ "$RUN_VERIFY" == "1" ]]; then
+    run_verify=1
+fi
+
+if (( run_verify )); then
+    echo
+    echo "$(c '1;36' '── VerifyChecklist ──')"
+    if curl -fsSL "$verify_url" -o /tmp/VerifyChecklist.sh 2>/dev/null && [[ -s /tmp/VerifyChecklist.sh ]]; then
+        bash /tmp/VerifyChecklist.sh || true
+        rm -f /tmp/VerifyChecklist.sh
+    else
+        echo "$(c '0;33' "WARN: could not fetch $verify_url — run it manually:")"
+        echo "  sudo bash <(curl -fsSL $verify_url)"
+    fi
+else
+    echo
+    echo "Run anytime: sudo bash <(curl -fsSL $verify_url)"
 fi

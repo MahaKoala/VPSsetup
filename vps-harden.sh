@@ -286,7 +286,9 @@ if bool "$INSTALL_TAILSCALE"; then
         if (( ts_rc == 0 )); then
             # Scrub the auth key from disk so VPS snapshots/images don't leak it.
             sed -i -E 's|^TAILSCALE_AUTHKEY=.*|TAILSCALE_AUTHKEY=""|' "$ENV_FILE"
+            printf '[STATUS] ok|tailscale up|joined as %s\n' "$TS_HOST"
         else
+            printf '[STATUS] fail|tailscale up|exit %d\n' "$ts_rc"
             echo
             echo "ERROR: 'tailscale up' failed (exit $ts_rc). Common causes:"
             echo "  - the auth key is expired, already used, or marked single-use"
@@ -297,7 +299,7 @@ if bool "$INSTALL_TAILSCALE"; then
         fi
         tailscale status || true
     else
-        echo "No TAILSCALE_AUTHKEY; tailscaled installed but not joined."
+        printf '[STATUS] warn|tailscale up|no TAILSCALE_AUTHKEY; tailscaled installed but not joined\n'
         echo "Join manually with: sudo tailscale up --auth-key=<your-key>"
     fi
 fi
