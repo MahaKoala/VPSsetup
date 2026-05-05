@@ -297,6 +297,22 @@ else
 fi
 INNER_EOF
 
+# Mirror tmuxai's config to /root/.config/tmuxai/ so `tmuxai` works when
+# invoked by root too (a common point of confusion: AI tool binaries are on
+# every user's PATH, but tmuxai reads ~/.config/tmuxai/config.yaml — meaning
+# root's empty $HOME/.config wouldn't find anything). Each user still keeps
+# its own state dir (history, MCP cache, etc.) since tmuxai uses $HOME at
+# runtime.
+USER_HOME_CFG="$(getent passwd "$VPS_USER" | cut -d: -f6 2>/dev/null || true)/.config/tmuxai/config.yaml"
+ROOT_CFG=/root/.config/tmuxai/config.yaml
+if [[ -f "$USER_HOME_CFG" && ! -f "$ROOT_CFG" ]]; then
+    install -d -m 700 -o root -g root /root/.config/tmuxai
+    install -m 600 -o root -g root "$USER_HOME_CFG" "$ROOT_CFG"
+    printf '[STATUS] ok|tmuxai config (root)|mirrored from %s\n' "$USER_HOME_CFG"
+elif [[ -f "$ROOT_CFG" ]]; then
+    printf '[STATUS] ok|tmuxai config (root)|already exists at %s (kept)\n' "$ROOT_CFG"
+fi
+
 # Bridge user-local AI tools into /usr/local/bin so root (and any other user)
 # can invoke them. Claude Code's official installer drops the binary in
 # ~/.local/bin which is per-user — root's PATH won't see it. The binary
@@ -333,10 +349,17 @@ fi
 
 echo "===== vps-tools complete @ $(date -Is) ====="
 echo
-echo "AI tools are installed under: $VPS_USER"
-echo "  - For full per-user state (config, history, MCP servers):"
-echo "      sudo -iu $VPS_USER       # then run claude / opencode / etc."
-echo "  - 'claude' is also symlinked to /usr/local/bin/claude so it works from any account"
-echo "    (it uses \$HOME for state, so root and $VPS_USER each get their own config dir)"
+echo "AI tools installed under user '$VPS_USER'."
 echo
-echo "Configure API keys in /etc/vps/secrets.env (mode 0600); source it from the user's .profile."
+echo "$(printf '\033[1;36m%s\033[0m' 'Recommended:') run AI tools as $VPS_USER, not root:"
+echo "    sudo -iu $VPS_USER         # one-shot login shell"
+echo "    tmuxai / claude / opencode / crush / codex"
+echo
+echo "$(printf '\033[2m%s\033[0m' 'For convenience, root can also use:')"
+echo "  - 'claude' (symlinked to /usr/local/bin/claude — uses \$HOME for state)"
+echo "  - 'tmuxai' (config mirrored to /root/.config/tmuxai/config.yaml)"
+echo
+echo "$(printf '\033[2m%s\033[0m' 'Each user gets its own state dir:') /home/$VPS_USER/.config/<tool>/"
+echo "$(printf '\033[2m%s\033[0m' 'and') /root/.config/<tool>/ — they don't share history/MCP cache."
+echo
+echo "Add per-tool API keys in /etc/vps/secrets.env (mode 0600); source from .profile."

@@ -1184,6 +1184,18 @@ else
 fi
 INNER_EOF
 
+# Mirror tmuxai config to /root/.config/tmuxai/ so root can also use tmuxai.
+# Each user keeps its own state dir; only the model+key config is shared.
+USER_HOME_CFG="$(getent passwd "$VPS_USER" | cut -d: -f6 2>/dev/null || true)/.config/tmuxai/config.yaml"
+ROOT_CFG=/root/.config/tmuxai/config.yaml
+if [[ -f "$USER_HOME_CFG" && ! -f "$ROOT_CFG" ]]; then
+    install -d -m 700 -o root -g root /root/.config/tmuxai
+    install -m 600 -o root -g root "$USER_HOME_CFG" "$ROOT_CFG"
+    printf '[STATUS] ok|tmuxai config (root)|mirrored from %s\n' "$USER_HOME_CFG"
+elif [[ -f "$ROOT_CFG" ]]; then
+    printf '[STATUS] ok|tmuxai config (root)|already exists at %s (kept)\n' "$ROOT_CFG"
+fi
+
 # Bridge user-local AI tools into /usr/local/bin so any account can run them.
 # Each user still gets their own state via $HOME.
 echo "--- system-wide tool symlinks ---"
