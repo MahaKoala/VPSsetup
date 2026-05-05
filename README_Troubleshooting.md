@@ -18,6 +18,10 @@ For what a *successful* run looks like (so you can recognise when something has 
 | `Error: The current working directory must be readable to <user>` | [§4 brew CWD](#error-the-current-working-directory-must-be-readable-to-user-to-run-brew) |
 | `WARN: failed bun` | [§4 bun install](#warn-failed-bun) |
 | `claude: command not found` from root | [§5 AI tools](#claude-command-not-found-from-root-but-claude-installed-for-user) |
+| `tmuxai: No AI configuration found` from root | [§5 tmuxai per-user config](#tmuxai-no-ai-configuration-found-from-root) |
+| `tmuxai: insufficient_quota` (OpenAI) | [§5 OpenAI billing](#tmuxai-insufficient_quota-openai-models) |
+| `tmuxai: Missing Authentication header` (Anthropic 401) | [§5 Anthropic-direct workaround](#tmuxai-missing-authentication-header-anthropic-models-401-error) |
+| `tmuxai: <model> is not a valid model ID` | [§5 fix model slug](#tmuxai-model-is-not-a-valid-model-id-400-error) |
 | `<var>: unbound variable` | [§6 partial env file](#var-unbound-variable-eg-disable_ipv6_ssh) |
 | `bash: -c: line 1: syntax error near unexpected token 'then'` | [§6 heredoc/argv](#bash--c-line-1-syntax-error-near-unexpected-token-then) |
 | `bash: /dev/fd/63: No such file or directory` | [§6 sudo+process-sub race](#bash-devfd63-no-such-file-or-directory--curl-23-failure-writing-output) |
@@ -405,6 +409,89 @@ eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
 brew install sst/tap/opencode charmbracelet/tap/crush
 '
 ```
+
+### tmuxai: `No AI configuration found` from root
+
+**Cause:** tmuxai reads `$HOME/.config/tmuxai/config.yaml`. The wizard writes that for `<user>` (e.g. `/home/maha/.config/tmuxai/config.yaml`); root has no equivalent until `vps-tools.sh` runs to mirror it to `/root/.config/tmuxai/config.yaml`.
+
+**Fix:** either run as `<user>` (recommended) or create root's config from the user's:
+
+```bash
+sudo install -d -m 0700 /root/.config/tmuxai
+sudo install -m 0600 /home/maha/.config/tmuxai/config.yaml /root/.config/tmuxai/config.yaml
+tmuxai     # now works as root
+```
+
+Current `vps-tools.sh` does this mirroring automatically; if you're hitting it on an old install, re-run the script.
+
+### tmuxai: `insufficient_quota` (OpenAI models)
+
+**Cause:** Your OpenAI account has no billing credits. OpenAI's API requires top-up before any non-trial usage; the API key alone is not enough.
+
+**Fix:** Add credits at [platform.openai.com/account/billing](https://platform.openai.com/account/billing). Minimum top-up is usually $5. Then retry — no config changes needed.
+
+**Workaround if you don't want to top up OpenAI:** switch to an OpenRouter equivalent that fronts OpenAI's models with one billing account:
+
+```
+TmuxAI » /model openrouter-fast
+```
+
+OpenRouter has a $5 minimum top-up too, but one OpenRouter key gets you OpenAI + Anthropic + Google + DeepSeek + Llama, etc.
+
+### tmuxai: `Missing Authentication header` (Anthropic models, 401 error)
+
+**Cause:** tmuxai's direct-Anthropic provider doesn't always set the `x-api-key` header that Anthropic's API requires. This is a tmuxai-side bug that varies across versions.
+
+**Fix:** Switch to the equivalent OpenRouter preset — OpenRouter routes to the same Claude models and works reliably with tmuxai:
+
+```
+TmuxAI » /model openrouter-best   # was: anthropic-best
+TmuxAI » /model openrouter-fast   # was: anthropic-fast
+```
+
+Same Claude Opus 4.7 / Sonnet 4.6 / Haiku 4.5, just routed via OpenRouter using your OpenRouter key.
+
+If you want to fix the direct path properly: edit `~/.config/tmuxai/config.yaml`, find the `anthropic-*` entries, and check whether tmuxai's release notes mention a config-key change (some versions want `auth_token` instead of `api_key` for non-OpenAI providers).
+
+### tmuxai: `<model> is not a valid model ID` (400 error)
+
+**Cause:** The model slug doesn't exist on the provider. Common with OpenRouter where slugs change as new versions ship; older configs reference deprecated names like `deepseek/deepseek-chat-v3.5`.
+
+**Fix:** Check the current model list at [openrouter.ai/models](https://openrouter.ai/models) and update the slug. Known-good cheap options:
+
+```yaml
+  openrouter-cheap:
+    provider: "openrouter"
+    model: "google/gemini-2.5-flash-lite"   # very cheap, very fast
+    # alternatives: google/gemini-2.5-flash, mistralai/mistral-small-3.2-24b-instruct,
+    #               meta-llama/llama-3.3-70b-instruct
+```
+
+Edit `~/.config/tmuxai/config.yaml` (the `models.openrouter-cheap.model` field), save, restart tmuxai.
+
+### tmuxai: `/model <name>` switching, useful commands
+
+```
+/model                      # list available models with current marked
+/model openrouter-best      # switch to a specific preset
+/help                       # full command list
+/exit                       # quit
+```
+
+The presets `vps-tools.sh` writes are: `openrouter-{best,fast,cheap}`, `openai-{best,fast,cheap}`, `anthropic-{best,fast,cheap}` (whichever providers' keys you supplied), plus `local-ollama` always. Test each one to confirm it works:
+
+```bash
+# As maha (recommended) or root:
+tmuxai
+TmuxAI » /model openrouter-fast
+TmuxAI » hi                       # confirm response
+TmuxAI » /model openrouter-best
+TmuxAI » hi
+TmuxAI » /model openai-fast       # only if you topped up OpenAI
+TmuxAI » /exit
+```
+
+A working preset means: provider auth is correct, model slug exists, and your account has credit. A failing one usually points at one of those three.
 
 ### Ollama service not active
 

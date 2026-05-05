@@ -213,23 +213,29 @@ if (( INTERACTIVE )); then
 The config will include 3 named model presets per provider you enable
 (best / fast / cheap). Switch at runtime with:  tmuxai --model <name>
 
-  OpenRouter   one key, access to many models. Cheapest entry point.
-               best:  anthropic/claude-opus-4.7
-               fast:  anthropic/claude-haiku-4.5
-               cheap: deepseek/deepseek-chat-v3.5
-               https://openrouter.ai/keys
+  OpenRouter (recommended — most reliable with tmuxai)
+    one key, access to all major models. Pay-as-you-go from $5 top-up.
+      best:  anthropic/claude-opus-4.7
+      fast:  anthropic/claude-haiku-4.5
+      cheap: google/gemini-2.5-flash-lite
+    https://openrouter.ai/keys
 
-  OpenAI       direct
-               best:  gpt-5.1
-               fast:  gpt-4.1-mini
-               cheap: gpt-4.1-nano
-               https://platform.openai.com/api-keys
+  OpenAI (direct — REQUIRES billing credits)
+    Without credits you'll see 'insufficient_quota' errors. Top up first.
+      best:  gpt-5.1
+      fast:  gpt-4.1-mini
+      cheap: gpt-4.1-nano
+    https://platform.openai.com/api-keys
+    https://platform.openai.com/account/billing
 
-  Anthropic    direct (no markup, full Claude reliability)
-               best:  claude-opus-4-7  (1M context)
-               fast:  claude-sonnet-4-6
-               cheap: claude-haiku-4-5
-               https://console.anthropic.com/settings/keys
+  Anthropic (direct — sometimes errors with "Missing Authentication header")
+    tmuxai's direct-Anthropic provider is uneven across versions. If you
+    hit auth errors, use the equivalent openrouter-* preset above instead
+    (same Claude models, via OpenRouter, works reliably).
+      best:  claude-opus-4-7  (1M context)
+      fast:  claude-sonnet-4-6
+      cheap: claude-haiku-4-5
+    https://console.anthropic.com/settings/keys
 
 A `local-ollama` entry is added automatically (uses your local ollama,
 no API key required). Press Enter on any provider prompt to skip it.
@@ -1077,6 +1083,7 @@ models:
 YAML_EOF
         if [ -n "${OPENROUTER_API_KEY:-}" ]; then
             cat <<YAML_EOF
+  # OpenRouter — most reliable path with tmuxai.
   openrouter-best:
     provider: "openrouter"
     model: "anthropic/claude-opus-4.7"
@@ -1087,12 +1094,13 @@ YAML_EOF
     api_key: "$OPENROUTER_API_KEY"
   openrouter-cheap:
     provider: "openrouter"
-    model: "deepseek/deepseek-chat-v3.5"
+    model: "google/gemini-2.5-flash-lite"
     api_key: "$OPENROUTER_API_KEY"
 YAML_EOF
         fi
         if [ -n "${OPENAI_API_KEY:-}" ]; then
             cat <<YAML_EOF
+  # OpenAI direct — needs billing credits or you get 'insufficient_quota'.
   openai-best:
     provider: "openai"
     model: "gpt-5.1"
@@ -1109,6 +1117,8 @@ YAML_EOF
         fi
         if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
             cat <<YAML_EOF
+  # Anthropic direct — some tmuxai versions return "Missing Authentication
+  # header" (401). If hit, use the equivalent openrouter-* model above.
   anthropic-best:
     provider: "anthropic"
     model: "claude-opus-4-7"
@@ -1229,6 +1239,16 @@ else
 fi
 
 echo "===== vps-tools done @ $(date -Is) ====="
+echo
+echo "Smoke-test tmuxai:"
+echo "    sudo -iu $VPS_USER && tmuxai"
+echo "    TmuxAI » /model openrouter-fast"
+echo "    TmuxAI » hi          # should respond without error"
+echo "Errors:  insufficient_quota → top up at platform.openai.com/billing"
+echo "         Missing Auth header → switch to openrouter-* (Anthropic quirk)"
+echo "         not a valid model ID → fix slug at openrouter.ai/models"
+echo "         More: README_Troubleshooting.md §5 (AI tools)"
+echo
 echo "API keys: drop them in /etc/vps/secrets.env (mode 0600), source from .profile."
 TOOLS_EOF
 chmod +x /usr/local/sbin/vps-tools.sh

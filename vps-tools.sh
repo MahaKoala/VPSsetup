@@ -186,6 +186,7 @@ models:
 YAML_EOF
         if [ -n "${OPENROUTER_API_KEY:-}" ]; then
             cat <<YAML_EOF
+  # OpenRouter — one key, access to all major models. Most reliable path.
   openrouter-best:
     provider: "openrouter"
     model: "anthropic/claude-opus-4.7"
@@ -196,12 +197,14 @@ YAML_EOF
     api_key: "$OPENROUTER_API_KEY"
   openrouter-cheap:
     provider: "openrouter"
-    model: "deepseek/deepseek-chat-v3.5"
+    model: "google/gemini-2.5-flash-lite"
     api_key: "$OPENROUTER_API_KEY"
 YAML_EOF
         fi
         if [ -n "${OPENAI_API_KEY:-}" ]; then
             cat <<YAML_EOF
+  # OpenAI direct — requires billing credits at platform.openai.com/billing.
+  # If you see 'insufficient_quota' errors, top up your OpenAI account.
   openai-best:
     provider: "openai"
     model: "gpt-5.1"
@@ -218,6 +221,10 @@ YAML_EOF
         fi
         if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
             cat <<YAML_EOF
+  # Anthropic direct — note: some tmuxai versions don't set the x-api-key
+  # header correctly and return "Missing Authentication header" (401). If
+  # you hit that, switch to the equivalent openrouter-* model above. Same
+  # Claude models, routed through OpenRouter — works reliably.
   anthropic-best:
     provider: "anthropic"
     model: "claude-opus-4-7"
@@ -363,3 +370,15 @@ echo "$(printf '\033[2m%s\033[0m' 'Each user gets its own state dir:') /home/$VP
 echo "$(printf '\033[2m%s\033[0m' 'and') /root/.config/<tool>/ — they don't share history/MCP cache."
 echo
 echo "Add per-tool API keys in /etc/vps/secrets.env (mode 0600); source from .profile."
+echo
+echo "$(printf '\033[1;36m%s\033[0m' 'Smoke-test tmuxai now:')"
+echo "    sudo -iu $VPS_USER       # switch to the user account"
+echo "    tmuxai                    # interactive REPL"
+echo "    TmuxAI » /model           # list configured presets"
+echo "    TmuxAI » /model openrouter-fast"
+echo "    TmuxAI » hi               # confirm a model responds without error"
+echo "If you hit:"
+echo "  insufficient_quota         → top up at platform.openai.com/account/billing"
+echo "  Missing Authentication     → switch to openrouter-* (Anthropic-direct quirk)"
+echo "  not a valid model ID       → check openrouter.ai/models, edit the slug"
+echo "  More: see README_Troubleshooting.md §5 (AI tools)"
