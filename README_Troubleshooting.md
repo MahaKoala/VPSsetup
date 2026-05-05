@@ -2,7 +2,29 @@
 
 A symptom-first guide to recovering from common VPS-setup failures. Each entry is **what you see → why it happens → how to fix**.
 
-If you're not sure where to start:
+For what a *successful* run looks like (so you can recognise when something has actually gone wrong vs. is normal output), see [README_SampleExperience.md](README_SampleExperience.md).
+
+## Quick lookup — symptom → section
+
+| Symptom | Section |
+|---|---|
+| `systemd[1]: Caught <ABRT>` / `Freezing execution` (broadcast message) | [§1 catastrophic systemd freeze](#systemd1-caught-abrt--freezing-execution-the-box-is-dead) — power-cycle required |
+| Connection refused / can't SSH back in after harden | [§1 SSH lockout](#1-ssh-lockout--cant-get-back-in) |
+| `Address already in use` from `ssh.service` | [§1 orphan listener](#sshservice-failed-to-start-with-address-already-in-use-on-port-22) |
+| `Missing privilege separation directory: /run/sshd` | [§1 missing privsep dir](#missing-privilege-separation-directory-runsshd) |
+| `WARN: SSH'd in as '<x>' but new AllowUsers will be: <y>` | [§1 AllowUsers warning](#warn-sshd-in-as-x-but-new-allowusers-will-be-y) |
+| `ufw is installed but not active` | [§2 UFW](#2-firewall-ufw) |
+| `'tailscale up' failed` with tag/key error | [§3 Tailscale](#3-tailscale) |
+| `Error: The current working directory must be readable to <user>` | [§4 brew CWD](#error-the-current-working-directory-must-be-readable-to-user-to-run-brew) |
+| `WARN: failed bun` | [§4 bun install](#warn-failed-bun) |
+| `claude: command not found` from root | [§5 AI tools](#claude-command-not-found-from-root-but-claude-installed-for-user) |
+| `<var>: unbound variable` | [§6 partial env file](#var-unbound-variable-eg-disable_ipv6_ssh) |
+| `bash: -c: line 1: syntax error near unexpected token 'then'` | [§6 heredoc/argv](#bash--c-line-1-syntax-error-near-unexpected-token-then) |
+| `bash: /dev/fd/63: No such file or directory` | [§6 sudo+process-sub race](#bash-devfd63-no-such-file-or-directory--curl-23-failure-writing-output) |
+| Verify shows ✗ for sshd-T or UFW | [§7 reading verify output](#7-reading-verifychecklistsh-output) |
+| Truly stuck — nothing on this list works | [§8 recovery / nuclear options](#8-recovery-scripts) and [rebuild from cloud panel](#last-resort-rebuild-the-vps) |
+
+If you're not sure where to start, run the audit first — the script's output points at the broken section directly:
 
 ```bash
 # Read the install report from your last run:
@@ -568,3 +590,42 @@ sudo grep -E '(ERROR|WARN|fail\|)' /var/log/vps-bootstrap.log | tail -30
 ```
 
 For Hetzner specifically: if you've completely locked yourself out, the **rescue console** (Hetzner Cloud panel → Rescue) boots a recovery image with full filesystem access. From there you can edit `/etc/ssh/sshd_config.d/99-vps-hardening.conf`, add a key to `/root/.ssh/authorized_keys`, or undo any UFW rule.
+
+---
+
+## Last resort: rebuild the VPS
+
+When the box is wedged badly enough that no in-VM recovery works (systemd frozen, multiple cascading failures, you've made too many half-fixes and lost track of state), the cleanest answer is often **rebuild the image**. The whole point of `vps-init.sh` is that this is fast and cheap.
+
+### Pre-rebuild checklist
+
+Before you click rebuild:
+
+1. **Save anything off the VPS you don't have elsewhere.** The disk is wiped on rebuild. Common things to grab: `/etc/vps/bootstrap.env` (so you can re-use the same `VPS_USER` / `VPS_HOSTNAME_PREFIX` / `VPS_ROLE`), any custom config you've added.
+2. **Revoke the previous Tailscale auth key** (admin → Settings → Keys) and **generate a fresh one** (ephemeral, tagged, single-use, 1-hour TTL).
+3. **Verify your laptop SSH key is in the cloud panel** (Hetzner → SSH Keys) so it gets auto-injected into `/root/.ssh/authorized_keys` on first boot.
+4. **Confirm `tailscale.json` ACL** has every tag you'll use in `tagOwners`, and the `users` list in the SSH ACL includes your `VPS_USER`.
+
+### Rebuild flow
+
+1. Hetzner Cloud panel → select VPS → **Rebuild** → Ubuntu 24.04 → confirm SSH keys checked → confirm
+2. Wait ~30 seconds for the new image
+3. Run the install (interactive wizard works over SSH with `-t`):
+
+```bash
+ssh -t root@<server-ip> "bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)"
+```
+
+For what each prompt looks like and what to enter, see [README_SampleExperience.md](README_SampleExperience.md).
+
+### After the install
+
+```bash
+# Open a SECOND SSH window first, verify access works:
+ssh maha@<server-ip>
+
+# Then audit:
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/VerifyChecklist.sh)
+```
+
+If verify passes, you're done. If verify fails, the failed lines point at the section in this doc. Don't make the mistake (we've all done it) of "fixing it manually" — usually re-running the relevant script picks up where it left off.

@@ -196,6 +196,8 @@ Layout:
 
 Operator guide for a brand-new Ubuntu 24.04 VPS where you can SSH in as `root` (the default state on Hetzner, DigitalOcean, Vultr, Linode, Contabo, OVH, RackNerd, Scaleway, etc.).
 
+> **First-time installer?** Read [README_SampleExperience.md](README_SampleExperience.md) alongside this — it walks through every wizard prompt with the actual output you should see, so you know what's normal vs. what indicates a problem. Failure paths are catalogued in [README_Troubleshooting.md](README_Troubleshooting.md).
+
 ### Before you begin
 
 You will want these in hand:
