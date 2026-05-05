@@ -3,6 +3,7 @@
 <!-- HEADER STYLE: CLASSIC -->
 <div align="center">
 
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/4d5954ed-3669-4de7-8254-cbcf370078de" />
 
 # VPSSETUP
 
@@ -73,7 +74,9 @@ VPSsetup is a comprehensive toolkit designed to automate the secure deployment a
 └── VPSsetup/
     ├── README.md
     ├── README_SSHIDscript.md
+    ├── README_SampleExperience.md
     ├── README_SingleFileVPSinit.md
+    ├── README_Troubleshooting.md
     ├── README_VPSscripts.md
     ├── VerifyChecklist.sh
     ├── addnew-sshid-key.sh
