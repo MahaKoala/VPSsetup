@@ -75,9 +75,13 @@ esac
 : "${TAILSCALE_EXTRA_ARGS:=--accept-routes}"
 
 : "${INSTALL_TOOLS:=0}"
-: "${TMUXAI_PROVIDER:=openrouter}"
-: "${TMUXAI_MODEL:=anthropic/claude-haiku-4.5}"
-: "${TMUXAI_API_KEY:=}"
+# tmuxai is configured with multi-provider model presets. Provide whichever
+# API keys you have; the config gets one entry per available provider × tier
+# (best / fast / cheap). All three blank → config still written with just the
+# always-on local-ollama entry.
+: "${OPENROUTER_API_KEY:=}"
+: "${OPENAI_API_KEY:=}"
+: "${ANTHROPIC_API_KEY:=}"
 
 : "${NONINTERACTIVE:=}"
 : "${RUN_HARDEN:=1}"
@@ -204,16 +208,36 @@ if (( INTERACTIVE )); then
         && INSTALL_TOOLS=1 || INSTALL_TOOLS=0
 
     if (( INSTALL_TOOLS )); then
-        echo
-        echo "  tmuxai (AI in tmux) needs an LLM API key to function."
-        echo "  OpenRouter is recommended (one key, access to many models):"
-        echo "    https://openrouter.ai/keys"
-        echo "  Press Enter at the API key prompt to skip — you can configure"
-        echo "  manually later by creating ~/.config/tmuxai/config.yaml"
-        echo
-        ask        "tmuxai provider (openrouter/openai/azure)" TMUXAI_PROVIDER "$TMUXAI_PROVIDER"
-        ask        "tmuxai model"                              TMUXAI_MODEL    "$TMUXAI_MODEL"
-        ask_secret "tmuxai API key (blank to skip config)"     TMUXAI_API_KEY
+        hdr "tmuxai (AI in tmux) configuration"
+        cat <<'EOF'
+The config will include 3 named model presets per provider you enable
+(best / fast / cheap). Switch at runtime with:  tmuxai --model <name>
+
+  OpenRouter   one key, access to many models. Cheapest entry point.
+               best:  anthropic/claude-opus-4.7
+               fast:  anthropic/claude-haiku-4.5
+               cheap: deepseek/deepseek-chat-v3.5
+               https://openrouter.ai/keys
+
+  OpenAI       direct
+               best:  gpt-5.1
+               fast:  gpt-4.1-mini
+               cheap: gpt-4.1-nano
+               https://platform.openai.com/api-keys
+
+  Anthropic    direct (no markup, full Claude reliability)
+               best:  claude-opus-4-7  (1M context)
+               fast:  claude-sonnet-4-6
+               cheap: claude-haiku-4-5
+               https://console.anthropic.com/settings/keys
+
+A `local-ollama` entry is added automatically (uses your local ollama,
+no API key required). Press Enter on any provider prompt to skip it.
+
+EOF
+        ask_secret "OpenRouter API key (blank to skip)" OPENROUTER_API_KEY
+        ask_secret "OpenAI API key (blank to skip)"     OPENAI_API_KEY
+        ask_secret "Anthropic API key (blank to skip)"  ANTHROPIC_API_KEY
     fi
 
     hdr "Review"
@@ -999,44 +1023,155 @@ else
     _st warn "tmuxai" "installer failed"
 fi
 
-# tmuxai config writer: env-vars-first, fall back to interactive prompt
-# if /dev/tty is reachable, else skip with a hint.
+# tmuxai multi-provider config writer (env-vars > tty > skip).
 TMUXAI_CFG_DIR="$HOME/.config/tmuxai"
 TMUXAI_CFG="$TMUXAI_CFG_DIR/config.yaml"
 if [ -f "$TMUXAI_CFG" ]; then
     _st ok "tmuxai config" "already exists at $TMUXAI_CFG (kept)"
 else
-    if [ -z "${TMUXAI_API_KEY:-}" ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    have_env_keys=0
+    [ -n "${OPENROUTER_API_KEY:-}" ] && have_env_keys=1
+    [ -n "${OPENAI_API_KEY:-}" ] && have_env_keys=1
+    [ -n "${ANTHROPIC_API_KEY:-}" ] && have_env_keys=1
+
+    if (( ! have_env_keys )) && [ -r /dev/tty ] && [ -w /dev/tty ]; then
         echo
-        echo "tmuxai needs an LLM API key. OpenRouter recommended:"
-        echo "  https://openrouter.ai/keys"
-        echo "Blank API key skips config (you can edit later)."
-        read -r -p "  Provider (openrouter/openai/azure) [openrouter]: " _tx_p </dev/tty
-        read -r -p "  Model [anthropic/claude-haiku-4.5]: " _tx_m </dev/tty
-        read -r -s -p "  API key (input hidden, blank to skip): " _tx_k </dev/tty
+        echo "tmuxai supports multiple providers; you'll get 3 model presets"
+        echo "(best/fast/cheap) per provider you enable. Switch at runtime:"
+        echo "  tmuxai --model <name>"
         echo
-        TMUXAI_PROVIDER="${_tx_p:-${TMUXAI_PROVIDER:-openrouter}}"
-        TMUXAI_MODEL="${_tx_m:-${TMUXAI_MODEL:-anthropic/claude-haiku-4.5}}"
-        TMUXAI_API_KEY="$_tx_k"
-        unset _tx_p _tx_m _tx_k
+        echo "  OpenRouter (recommended): https://openrouter.ai/keys"
+        echo "  OpenAI:    https://platform.openai.com/api-keys"
+        echo "  Anthropic: https://console.anthropic.com/settings/keys"
+        echo "  (local-ollama entry added automatically)"
+        echo
+        read -r -s -p "  OpenRouter API key (hidden, blank = skip): " OPENROUTER_API_KEY </dev/tty || true
+        echo
+        read -r -s -p "  OpenAI API key     (hidden, blank = skip): " OPENAI_API_KEY </dev/tty || true
+        echo
+        read -r -s -p "  Anthropic API key  (hidden, blank = skip): " ANTHROPIC_API_KEY </dev/tty || true
+        echo
     fi
-    if [ -n "${TMUXAI_API_KEY:-}" ]; then
-        mkdir -p "$TMUXAI_CFG_DIR"
-        umask 077
-        cat > "$TMUXAI_CFG" <<YAML_EOF
-models:
-  primary:
-    provider: ${TMUXAI_PROVIDER:-openrouter}
-    model: ${TMUXAI_MODEL:-anthropic/claude-haiku-4.5}
-    api_key: $TMUXAI_API_KEY
-YAML_EOF
-        chmod 600 "$TMUXAI_CFG"
-        umask 022
-        _st ok "tmuxai config" "written to $TMUXAI_CFG"
-        unset TMUXAI_API_KEY
+
+    if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+        _tmuxai_default="openrouter-fast"
+    elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        _tmuxai_default="anthropic-fast"
+    elif [ -n "${OPENAI_API_KEY:-}" ]; then
+        _tmuxai_default="openai-fast"
     else
-        _st warn "tmuxai config" "no API key; skipped (edit $TMUXAI_CFG manually)"
+        _tmuxai_default="local-ollama"
     fi
+
+    mkdir -p "$TMUXAI_CFG_DIR"
+    umask 077
+    {
+        cat <<YAML_EOF
+# ~/.config/tmuxai/config.yaml — generated by vps-tools.sh
+default_model: "$_tmuxai_default"
+
+tmux:
+  exec_split_args: ["-d", "-h"]
+
+models:
+YAML_EOF
+        if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            cat <<YAML_EOF
+  openrouter-best:
+    provider: "openrouter"
+    model: "anthropic/claude-opus-4.7"
+    api_key: "$OPENROUTER_API_KEY"
+  openrouter-fast:
+    provider: "openrouter"
+    model: "anthropic/claude-haiku-4.5"
+    api_key: "$OPENROUTER_API_KEY"
+  openrouter-cheap:
+    provider: "openrouter"
+    model: "deepseek/deepseek-chat-v3.5"
+    api_key: "$OPENROUTER_API_KEY"
+YAML_EOF
+        fi
+        if [ -n "${OPENAI_API_KEY:-}" ]; then
+            cat <<YAML_EOF
+  openai-best:
+    provider: "openai"
+    model: "gpt-5.1"
+    api_key: "$OPENAI_API_KEY"
+  openai-fast:
+    provider: "openai"
+    model: "gpt-4.1-mini"
+    api_key: "$OPENAI_API_KEY"
+  openai-cheap:
+    provider: "openai"
+    model: "gpt-4.1-nano"
+    api_key: "$OPENAI_API_KEY"
+YAML_EOF
+        fi
+        if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            cat <<YAML_EOF
+  anthropic-best:
+    provider: "anthropic"
+    model: "claude-opus-4-7"
+    api_key: "$ANTHROPIC_API_KEY"
+  anthropic-fast:
+    provider: "anthropic"
+    model: "claude-sonnet-4-6"
+    api_key: "$ANTHROPIC_API_KEY"
+  anthropic-cheap:
+    provider: "anthropic"
+    model: "claude-haiku-4-5"
+    api_key: "$ANTHROPIC_API_KEY"
+YAML_EOF
+        fi
+        cat <<'YAML_EOF'
+  local-ollama:
+    provider: "openai"
+    model: "qwen2.5-coder:7b"
+    api_key: "ollama"
+    base_url: "http://localhost:11434/v1"
+
+exec_confirm: true
+send_keys_confirm: true
+paste_multiline_confirm: true
+
+whitelist_patterns:
+  - '^pwd\s*$'
+  - '^ls(\s+.*)?$'
+  - '^cat(\s+.*)?$'
+  - '^find(\s+.*)?$'
+  - '^grep(\s+.*)?$'
+  - '^git status\s*$'
+  - '^git diff(\s+.*)?$'
+
+blacklist_patterns:
+  - 'rm\s+'
+  - 'mv\s+'
+  - 'dd\s+'
+  - 'mkfs'
+  - 'shutdown'
+  - 'reboot'
+  - 'ufw\s+'
+  - 'iptables'
+  - 'chown\s+'
+  - 'chmod\s+777'
+  - 'userdel'
+  - 'passwd'
+
+knowledge_base:
+  skills:
+    enabled: false
+YAML_EOF
+    } > "$TMUXAI_CFG"
+    chmod 600 "$TMUXAI_CFG"
+    umask 022
+
+    n_providers=0
+    [ -n "${OPENROUTER_API_KEY:-}" ] && n_providers=$((n_providers+1))
+    [ -n "${OPENAI_API_KEY:-}" ] && n_providers=$((n_providers+1))
+    [ -n "${ANTHROPIC_API_KEY:-}" ] && n_providers=$((n_providers+1))
+    _st ok "tmuxai config" "default=$_tmuxai_default, providers=$n_providers + local-ollama"
+
+    unset OPENROUTER_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY _tmuxai_default n_providers have_env_keys
 fi
 
 echo "--- tmux plugin manager ---"
@@ -1103,10 +1238,10 @@ fi
 if [[ "${INSTALL_TOOLS}" == "1" ]]; then
     echo
     echo "$(c '1;32' '▶ Running vps-tools.sh')"
-    # Propagate tmuxai config to vps-tools.sh; cleared after run.
-    export TMUXAI_PROVIDER TMUXAI_MODEL TMUXAI_API_KEY
+    # Propagate provider keys to the tools script; cleared after run.
+    export OPENROUTER_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY
     /usr/local/sbin/vps-tools.sh
-    unset TMUXAI_API_KEY
+    unset OPENROUTER_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY
 fi
 
 echo
