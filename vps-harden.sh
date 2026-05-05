@@ -178,6 +178,28 @@ if bool "$HARDEN_SSH"; then
 
     systemctl enable ssh.service 2>/dev/null || true
 
+    # Orphan-listener cleanup. Ubuntu's ssh.service has KillMode=process, so
+    # a failed start leaves the original listener `sshd` alive but unparented
+    # under the unit's cgroup. The next `start` then fails with "Address
+    # already in use" because port $SSH_PORT is still held. Detect this case
+    # — port-held + service-not-active — and kill ONLY listener processes
+    # (cmdline contains `[listener]`). Per-connection sshds carrying live
+    # SSH sessions never have that marker, so this is safe to run while we
+    # ourselves are SSH'd in.
+    if ! systemctl is-active --quiet ssh.service; then
+        for orphan_pid in $(ss -tlnp 2>/dev/null \
+                            | grep -E ":${SSH_PORT}[[:space:]]" \
+                            | grep -oP 'pid=\K[0-9]+' | sort -u); do
+            if ps -p "$orphan_pid" -o args= 2>/dev/null | grep -q 'sshd.*\[listener\]'; then
+                echo "Detected orphan sshd listener (pid=$orphan_pid) on port $SSH_PORT; killing"
+                kill -TERM "$orphan_pid" 2>/dev/null || true
+                sleep 1
+                kill -0 "$orphan_pid" 2>/dev/null && kill -KILL "$orphan_pid" 2>/dev/null || true
+            fi
+        done
+        systemctl reset-failed ssh.service 2>/dev/null || true
+    fi
+
     # State machine to apply config without locking the operator out:
     #   - ssh.service already active  → reload (SIGHUP, preserves sessions)
     #   - ssh.service not active yet  → start (first transition off ssh.socket)

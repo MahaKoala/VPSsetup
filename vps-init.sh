@@ -634,6 +634,23 @@ if bool "${HARDEN_SSH:-1}"; then
     rm -f "${DROPIN}.bak"
     systemctl enable ssh.service 2>/dev/null || true
 
+    # Clear any orphan sshd listener holding the port (KillMode=process leftover).
+    # Only kills processes whose cmdline contains [listener]; per-connection
+    # sshds (with live sessions) lack that marker and are left alone.
+    if ! systemctl is-active --quiet ssh.service; then
+        for orphan_pid in $(ss -tlnp 2>/dev/null \
+                            | grep -E ":${SSH_PORT}[[:space:]]" \
+                            | grep -oP 'pid=\K[0-9]+' | sort -u); do
+            if ps -p "$orphan_pid" -o args= 2>/dev/null | grep -q 'sshd.*\[listener\]'; then
+                echo "Killing orphan sshd listener (pid=$orphan_pid) on port $SSH_PORT"
+                kill -TERM "$orphan_pid" 2>/dev/null || true
+                sleep 1
+                kill -0 "$orphan_pid" 2>/dev/null && kill -KILL "$orphan_pid" 2>/dev/null || true
+            fi
+        done
+        systemctl reset-failed ssh.service 2>/dev/null || true
+    fi
+
     # Apply config: reload if active (preserves sessions), start if not, with
     # diagnostics on failure instead of aborting blind.
     if systemctl is-active --quiet ssh.service; then
