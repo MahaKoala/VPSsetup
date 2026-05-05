@@ -109,9 +109,11 @@ if bool "$HARDEN_SSH"; then
     chmod 644 "$DROPIN"
 
     # Ubuntu 24.04 ships ssh.socket socket-activated. Drop-in changes don't
-    # always apply on first restart unless we disable the socket and use the
-    # classic ssh.service.
+    # always apply on first restart unless we disable AND mask the socket and
+    # use the classic ssh.service. Masking prevents apt operations / package
+    # hooks from re-enabling it later.
     systemctl disable --now ssh.socket 2>/dev/null || true
+    systemctl mask ssh.socket 2>/dev/null || true
 
     # Validate. Roll back to previous drop-in (or remove ours) on failure
     # rather than leaving a broken sshd config in place.
@@ -126,12 +128,39 @@ if bool "$HARDEN_SSH"; then
     fi
     rm -f "${DROPIN}.bak"
 
-    systemctl enable --now ssh
-    # Reload (SIGHUP), not restart. SIGHUP makes sshd re-read config; existing
-    # sessions stay alive, only *new* connections use the new config. That way
-    # the operator can verify a fresh login succeeds before logging out of the
-    # current session — the canonical "don't lock yourself out" pattern.
-    systemctl reload ssh
+    systemctl enable ssh.service 2>/dev/null || true
+
+    # State machine to apply config without locking the operator out:
+    #   - ssh.service already active  → reload (SIGHUP, preserves sessions)
+    #   - ssh.service not active yet  → start (first transition off ssh.socket)
+    #   - either fails                → fall back / print diagnostics, abort
+    if systemctl is-active --quiet ssh.service; then
+        if ! systemctl reload ssh.service; then
+            echo "WARN: 'systemctl reload ssh' failed; falling back to restart"
+            systemctl restart ssh.service
+        fi
+    else
+        if ! systemctl start ssh.service; then
+            echo
+            echo "ERROR: ssh.service failed to start. Diagnostics:"
+            echo "--- systemctl status ---"
+            systemctl status ssh.service --no-pager 2>&1 | head -25 || true
+            echo "--- recent journal ---"
+            journalctl -u ssh.service --no-pager -n 25 2>/dev/null || true
+            echo "--- port ${SSH_PORT} listeners ---"
+            ss -tlnp 2>/dev/null | grep -E ":${SSH_PORT}\b" || echo "(none listening)"
+            echo
+            echo "Common fixes:"
+            echo "  1) ssh.socket still holding the port:"
+            echo "       systemctl stop ssh.socket; systemctl mask ssh.socket"
+            echo "       systemctl restart ssh.service"
+            echo "  2) Missing host keys:"
+            echo "       ssh-keygen -A; systemctl restart ssh.service"
+            echo "  3) Config error not caught by sshd -t:"
+            echo "       /usr/sbin/sshd -ddd -p ${SSH_PORT}   (foreground, verbose)"
+            exit 1
+        fi
+    fi
 fi
 
 # ---------- 3. UFW ----------

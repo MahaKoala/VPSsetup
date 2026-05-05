@@ -554,8 +554,10 @@ if bool "${HARDEN_SSH:-1}"; then
       fi
     } > "$DROPIN"
     chmod 644 "$DROPIN"
-    # Ubuntu 24.04 ships ssh as a socket unit — disable so drop-ins apply reliably
+    # Ubuntu 24.04 ships ssh as a socket unit — disable AND mask so apt
+    # operations / package hooks can't re-enable it; then use ssh.service.
     systemctl disable --now ssh.socket 2>/dev/null || true
+    systemctl mask ssh.socket 2>/dev/null || true
     # Validate; roll back on failure rather than leaving a broken drop-in.
     if ! sshd -t; then
         echo "ERROR: sshd -t rejected new drop-in; rolling back"
@@ -563,9 +565,32 @@ if bool "${HARDEN_SSH:-1}"; then
         exit 1
     fi
     rm -f "${DROPIN}.bak"
-    systemctl enable --now ssh
-    # Reload (SIGHUP) preserves existing sessions; restart could drop them.
-    systemctl reload ssh
+    systemctl enable ssh.service 2>/dev/null || true
+
+    # Apply config: reload if active (preserves sessions), start if not, with
+    # diagnostics on failure instead of aborting blind.
+    if systemctl is-active --quiet ssh.service; then
+        if ! systemctl reload ssh.service; then
+            echo "WARN: reload failed, falling back to restart"
+            systemctl restart ssh.service
+        fi
+    else
+        if ! systemctl start ssh.service; then
+            echo
+            echo "ERROR: ssh.service failed to start. Diagnostics:"
+            systemctl status ssh.service --no-pager 2>&1 | head -25 || true
+            echo "--- recent journal ---"
+            journalctl -u ssh.service --no-pager -n 25 2>/dev/null || true
+            echo "--- port ${SSH_PORT} listeners ---"
+            ss -tlnp 2>/dev/null | grep -E ":${SSH_PORT}\b" || echo "(none listening)"
+            echo
+            echo "Try:"
+            echo "  systemctl stop ssh.socket; systemctl mask ssh.socket"
+            echo "  ssh-keygen -A   # ensure host keys exist"
+            echo "  systemctl restart ssh.service"
+            exit 1
+        fi
+    fi
 fi
 
 # UFW
