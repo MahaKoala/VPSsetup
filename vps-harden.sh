@@ -14,6 +14,37 @@ ENV_FILE="${ENV_FILE:-/etc/vps/bootstrap.env}"
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 
+# Defaults for every optional var. The env file written by vps-init.sh is
+# intentionally minimal — older or hand-edited copies may be missing newer
+# vars. With `set -u` on, any unset reference would abort the run; defaults
+# make the script tolerant of partial env files.
+: "${VPS_USER:?VPS_USER must be set in $ENV_FILE}"
+: "${SSH_PORT:=22}"
+: "${HARDEN_SSH:=1}"
+: "${ALLOW_PASSWORD_AUTH:=no}"
+: "${PERMIT_ROOT_LOGIN:=prohibit-password}"
+: "${LIMIT_SSH_TO_ADMIN_USER:=1}"
+: "${DISABLE_IPV6_SSH:=0}"
+: "${ENABLE_UFW:=1}"
+: "${PUBLIC_SSH_ALLOWED:=1}"
+: "${ALLOW_HTTP_HTTPS:=0}"
+: "${EXTRA_UFW_PORTS:=}"
+: "${ENABLE_FAIL2BAN:=1}"
+: "${ENABLE_UNATTENDED:=1}"
+: "${UNATTENDED_AUTOREBOOT:=true}"
+: "${UNATTENDED_AUTOREBOOT_TIME:=03:30}"
+: "${ENABLE_SYSCTL_HARDENING:=1}"
+: "${DISABLE_IPV6:=0}"
+: "${INSTALL_TAILSCALE:=1}"
+: "${TAILSCALE_AUTHKEY:=}"
+: "${TAILSCALE_HOSTNAME:=}"
+: "${TAILSCALE_TAGS:=}"
+: "${TAILSCALE_SSH:=1}"
+: "${TAILSCALE_ACCEPT_DNS:=false}"
+: "${TAILSCALE_ADVERTISE_ROUTES:=}"
+: "${TAILSCALE_EXIT_NODE:=0}"
+: "${TAILSCALE_EXTRA_ARGS:=--accept-routes}"
+
 export DEBIAN_FRONTEND=noninteractive
 bool() { [[ "$1" == "1" || "$1" == "true" || "$1" == "yes" ]]; }
 
@@ -114,6 +145,13 @@ if bool "$HARDEN_SSH"; then
     # hooks from re-enabling it later.
     systemctl disable --now ssh.socket 2>/dev/null || true
     systemctl mask ssh.socket 2>/dev/null || true
+
+    # /run/sshd must exist for sshd -t / sshd -T (privilege-separation dir).
+    # /run is a tmpfs; the directory is normally materialised by ssh.service's
+    # RuntimeDirectory=sshd at start time, but `sshd -t` runs before that so
+    # we have to create it ourselves.
+    mkdir -p /run/sshd
+    chmod 0755 /run/sshd
 
     # Validate. Roll back to previous drop-in (or remove ours) on failure
     # rather than leaving a broken sshd config in place.

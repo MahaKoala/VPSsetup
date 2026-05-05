@@ -482,6 +482,33 @@ echo "===== vps-harden @ $(date -Is) ====="
 ENV_FILE="${ENV_FILE:-/etc/vps/bootstrap.env}"
 # shellcheck disable=SC1090
 source "$ENV_FILE"
+
+# Defaults so missing-from-env-file vars don't trip `set -u`.
+: "${VPS_USER:?VPS_USER must be set in $ENV_FILE}"
+: "${SSH_PORT:=22}"
+: "${HARDEN_SSH:=1}"
+: "${ALLOW_PASSWORD_AUTH:=no}"
+: "${PERMIT_ROOT_LOGIN:=prohibit-password}"
+: "${LIMIT_SSH_TO_ADMIN_USER:=1}"
+: "${DISABLE_IPV6_SSH:=0}"
+: "${ENABLE_UFW:=1}"
+: "${PUBLIC_SSH_ALLOWED:=1}"
+: "${ALLOW_HTTP_HTTPS:=0}"
+: "${EXTRA_UFW_PORTS:=}"
+: "${ENABLE_FAIL2BAN:=1}"
+: "${ENABLE_UNATTENDED:=1}"
+: "${ENABLE_SYSCTL_HARDENING:=1}"
+: "${DISABLE_IPV6:=0}"
+: "${INSTALL_TAILSCALE:=1}"
+: "${TAILSCALE_AUTHKEY:=}"
+: "${TAILSCALE_HOSTNAME:=}"
+: "${TAILSCALE_TAGS:=}"
+: "${TAILSCALE_SSH:=1}"
+: "${TAILSCALE_ACCEPT_DNS:=false}"
+: "${TAILSCALE_ADVERTISE_ROUTES:=}"
+: "${TAILSCALE_EXIT_NODE:=0}"
+: "${TAILSCALE_EXTRA_ARGS:=--accept-routes}"
+
 export DEBIAN_FRONTEND=noninteractive
 bool() { [[ "$1" == "1" || "$1" == "true" || "$1" == "yes" ]]; }
 
@@ -558,6 +585,9 @@ if bool "${HARDEN_SSH:-1}"; then
     # operations / package hooks can't re-enable it; then use ssh.service.
     systemctl disable --now ssh.socket 2>/dev/null || true
     systemctl mask ssh.socket 2>/dev/null || true
+    # /run/sshd is a tmpfs runtime dir; ensure it exists before sshd -t.
+    mkdir -p /run/sshd
+    chmod 0755 /run/sshd
     # Validate; roll back on failure rather than leaving a broken drop-in.
     if ! sshd -t; then
         echo "ERROR: sshd -t rejected new drop-in; rolling back"
