@@ -116,6 +116,25 @@ else
 fi
 INNER_EOF
 
+# Bridge user-local AI tools into /usr/local/bin so root (and any other user)
+# can invoke them. Claude Code's official installer drops the binary in
+# ~/.local/bin which is per-user — root's PATH won't see it. The binary
+# itself uses $HOME for state, so each user gets their own config dir.
+echo "--- system-wide tool symlinks ---"
+USER_HOME="$(getent passwd "$VPS_USER" | cut -d: -f6 2>/dev/null || true)"
+if [[ -n "$USER_HOME" ]]; then
+    for bin in claude; do
+        src="$USER_HOME/.local/bin/$bin"
+        dst="/usr/local/bin/$bin"
+        if [[ -x "$src" ]]; then
+            ln -sf "$src" "$dst"
+            printf '[STATUS] ok|symlink %s|%s -> %s\n' "$bin" "$dst" "$src"
+        else
+            printf '[STATUS] warn|symlink %s|source not found at %s\n' "$bin" "$src"
+        fi
+    done
+fi
+
 # Ollama runs as a system daemon, not under $VPS_USER
 echo "--- Ollama (system daemon) ---"
 if command -v ollama &>/dev/null; then
@@ -132,4 +151,11 @@ else
 fi
 
 echo "===== vps-tools complete @ $(date -Is) ====="
+echo
+echo "AI tools are installed under: $VPS_USER"
+echo "  - For full per-user state (config, history, MCP servers):"
+echo "      sudo -iu $VPS_USER       # then run claude / opencode / etc."
+echo "  - 'claude' is also symlinked to /usr/local/bin/claude so it works from any account"
+echo "    (it uses \$HOME for state, so root and $VPS_USER each get their own config dir)"
+echo
 echo "Configure API keys in /etc/vps/secrets.env (mode 0600); source it from the user's .profile."

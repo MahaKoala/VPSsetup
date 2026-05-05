@@ -972,6 +972,23 @@ else
 fi
 INNER_EOF
 
+# Bridge user-local AI tools into /usr/local/bin so any account can run them.
+# Each user still gets their own state via $HOME.
+echo "--- system-wide tool symlinks ---"
+USER_HOME="$(getent passwd "$VPS_USER" | cut -d: -f6 2>/dev/null || true)"
+if [[ -n "$USER_HOME" ]]; then
+    for bin in claude; do
+        src="$USER_HOME/.local/bin/$bin"
+        dst="/usr/local/bin/$bin"
+        if [[ -x "$src" ]]; then
+            ln -sf "$src" "$dst"
+            printf '[STATUS] ok|symlink %s|%s -> %s\n' "$bin" "$dst" "$src"
+        else
+            printf '[STATUS] warn|symlink %s|source not found at %s\n' "$bin" "$src"
+        fi
+    done
+fi
+
 # Ollama runs as a system daemon, not under $VPS_USER
 echo "--- Ollama (system daemon) ---"
 if command -v ollama &>/dev/null; then
@@ -1071,6 +1088,13 @@ if [[ "${INSTALL_TAILSCALE}" == "1" ]]; then
     echo "Tailnet:  ssh ${VPS_USER}@$(tailscale status --self --json 2>/dev/null | grep -oP '"DNSName":\s*"\K[^"]+' | head -1 || echo '<hostname>')"
 fi
 echo
+if [[ "${INSTALL_TOOLS}" == "1" ]]; then
+    echo
+    echo "AI tools installed under user '${VPS_USER}'."
+    echo "  For full per-user state:  sudo -iu ${VPS_USER}   (then run claude / opencode / etc.)"
+    echo "  'claude' is also symlinked to /usr/local/bin/claude so root can run it too."
+    echo
+fi
 echo "Re-run later:"
 echo "  sudo /usr/local/sbin/vps-bootstrap.sh   # re-apply user/keys/brew"
 echo "  sudo /usr/local/sbin/vps-harden.sh      # re-apply firewall/ssh/tailscale"
