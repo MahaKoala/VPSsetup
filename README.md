@@ -277,7 +277,7 @@ The hook lives at `~/.firstlogin-passwd.sh`, is sourced by `~/.vps-shell.sh`, an
 - 5-hour and 7-day Max-plan rate-limit windows with pace arrows and time-to-reset
 - Prompt cache hit rate
 
-The bundle ([`CustomConfigs/claude-statusline-export.tar.gz`](CustomConfigs/)) is fetched at install time and unpacked under `~/.claude/`. Re-runnable; settings are merged with `jq`, never blindly overwritten — your existing `settings.json` is backed up to `settings.json.bak.YYYYMMDD-HHMMSS` first.
+The bundle ([`CustomConfigs/claude-statusline-export.tar.gz`](CustomConfigs/)) is fetched at install time and unpacked under `~/.claude/`. **Installed for both `root` and `$VPS_USER`** — since `claude` is symlinked to `/usr/local/bin/claude` either user can invoke it, and both get the same statusline. Re-runnable; settings are merged with `jq`, never blindly overwritten — any existing `settings.json` is backed up to `settings.json.bak.YYYYMMDD-HHMMSS` first.
 
 See **[CustomConfigs/README.md](CustomConfigs/README.md)** for the full statusline spec, install-script behavior, and customization.
 
@@ -432,7 +432,7 @@ These are points worth being explicit about — non-obvious choices and *why*.
 
 - **Installer paths:** brew taps where they exist (`opencode`, `crush`); `npm i -g @openai/codex` for Codex (no Linux brew formula); `claude.ai/install.sh` for Claude Code (no Linux cask). Failed installs do not abort the rest of the tools step — each step emits a `[STATUS] warn` line so the operator sees what broke.
 - **Claude Code system-wide symlink.** Claude's installer writes to `~/.local/bin/claude` per-user, so root has no PATH access by default. After Claude install, `vps-tools.sh` creates `/usr/local/bin/claude` as a symlink to `<user>/.local/bin/claude`. Both root and the VPS user can now run `claude`; each user gets their own state under their own `$HOME/.config/claude` dir.
-- **Custom statusline (CustomConfigs).** `vps-tools.sh` fetches `CustomConfigs/claude-statusline-export.tar.gz` after Claude installs, runs the bundled `install.sh`, which merges the `statusLine` block into `~/.claude/settings.json` via `jq` (with timestamped backup). See [CustomConfigs/README.md](CustomConfigs/README.md).
+- **Custom statusline (CustomConfigs).** `vps-tools.sh` fetches `CustomConfigs/claude-statusline-export.tar.gz` after Claude installs, then runs the bundled `install.sh` **twice — once as root, once as `$VPS_USER` via `sudo -Hu`** — so `~/.claude/settings.json` is configured under both `/root/.claude` and `/home/<user>/.claude`. The temp extraction dir is `chown`'d between runs so the user can read it. Settings merge via `jq` with a timestamped backup. See [CustomConfigs/README.md](CustomConfigs/README.md).
 
 ### Install reporting
 

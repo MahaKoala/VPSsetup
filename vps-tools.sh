@@ -78,14 +78,30 @@ if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
     fi
 
     echo "--- Claude Code statusline (CustomConfigs) ---"
+    # Install the statusline for BOTH root and $VPS_USER so `claude` works
+    # the same way regardless of who invokes it. The bundled install.sh
+    # resolves "$HOME/.claude" — so we run it twice with two different HOMEs:
+    #   1. as root (current context) — lands in /root/.claude
+    #   2. as $VPS_USER via `sudo -Hu`  — lands in /home/<user>/.claude
+    # The mktemp dir is mode 700 owned by root; we install for root first
+    # while ownership is still root, then chown to $VPS_USER for step 2.
     statusline_url="https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/CustomConfigs/claude-statusline-export.tar.gz"
     statusline_tmp="$(mktemp -d)"
     if curl -fsSL "$statusline_url" -o "$statusline_tmp/bundle.tar.gz" \
-       && tar -xzf "$statusline_tmp/bundle.tar.gz" -C "$statusline_tmp" \
-       && bash "$statusline_tmp/claude-statusline-export/install.sh" >/dev/null 2>&1; then
-        _st ok "claude-statusline" "installed"
+       && tar -xzf "$statusline_tmp/bundle.tar.gz" -C "$statusline_tmp"; then
+        if bash "$statusline_tmp/claude-statusline-export/install.sh"; then
+            _st ok "claude-statusline" "installed for root"
+        else
+            _st warn "claude-statusline" "install failed for root"
+        fi
+        chown -R "$VPS_USER:$VPS_USER" "$statusline_tmp"
+        if sudo -Hu "$VPS_USER" bash "$statusline_tmp/claude-statusline-export/install.sh"; then
+            _st ok "claude-statusline" "installed for $VPS_USER"
+        else
+            _st warn "claude-statusline" "install failed for $VPS_USER"
+        fi
     else
-        _st warn "claude-statusline" "installer failed"
+        _st warn "claude-statusline" "download/extract failed"
     fi
     rm -rf "$statusline_tmp"
 
