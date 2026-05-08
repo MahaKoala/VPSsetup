@@ -1,7 +1,6 @@
 # Claude Code statusline (Ava's setup)
 
 Custom statusline for Claude Code showing:
-wget https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/CustomConfigs/claude-statusline-export.tar.gz
 
 - Model name (color-coded by family)
 - Current working directory (with `~` for `$HOME`)
@@ -45,6 +44,7 @@ wget https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/CustomConfigs/cla
 ## Install
 
 ```bash
+wget https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/CustomConfigs/claude-statusline-export.tar.gz
 tar xzf claude-statusline-export.tar.gz
 cd claude-statusline-export
 ./install.sh
