@@ -3,8 +3,6 @@
 <!-- HEADER STYLE: CLASSIC -->
 <div align="center">
 
-<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/4d5954ed-3669-4de7-8254-cbcf370078de" />
-
 # VPSSETUP
 
 <em>Secure, Simplify, Scale Your Server Infrastructure Effortlessly</em>
