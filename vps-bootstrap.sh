@@ -300,7 +300,7 @@ done
 
 append_line_if_missing "$BASHRC" 'command -v starship >/dev/null && eval "$(starship init bash)"' "$VPS_USER" "$VPS_USER"
 append_line_if_missing "$BASHRC" 'command -v zoxide >/dev/null && eval "$(zoxide init bash)"' "$VPS_USER" "$VPS_USER"
-append_line_if_missing "$BASHRC" 'command -v eza >/dev/null && alias ls="eza --group-directories-first"' "$VPS_USER" "$VPS_USER"
+append_line_if_missing "$BASHRC" 'command -v eza >/dev/null && alias ls="eza -la --group --header --group-directories-first"' "$VPS_USER" "$VPS_USER"
 append_line_if_missing "$BASHRC" 'command -v bat >/dev/null && alias cat="bat --paging=never"' "$VPS_USER" "$VPS_USER"
 append_line_if_missing "$BASHRC" '[ -f "$HOME/.firstlogin-passwd.sh" ] && . "$HOME/.firstlogin-passwd.sh"' "$VPS_USER" "$VPS_USER"
 
