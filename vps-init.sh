@@ -441,6 +441,41 @@ while IFS= read -r line; do
 done < "$AUTH"
 chmod 600 "$ROOT_AUTH"
 
+# 4b. First-login password prompt
+# When root does `su $VPS_USER` (or the user logs in for the first time), this
+# hook (sourced from ~/.bashrc) prompts them to set a password. Self-disables
+# after success.
+echo "--- first-login password hook ---"
+FIRSTLOGIN="${USER_HOME}/.firstlogin-passwd.sh"
+cat > "$FIRSTLOGIN" <<'HOOK'
+#!/usr/bin/env bash
+# Prompt to set a password on first interactive login. Sourced from ~/.bashrc.
+[ -t 0 ] || return 0
+[ -f "$HOME/.password_set" ] && return 0
+
+# Column 2 of `passwd -S`: L=locked, NP=no-password, P=valid.
+state=$(sudo -n passwd -S "$USER" 2>/dev/null | awk '{print $2}')
+case "$state" in
+    L|NP)
+        echo
+        echo "Welcome, $USER. This account has no password yet."
+        echo "Set one now (you'll be prompted twice):"
+        if sudo passwd "$USER"; then
+            touch "$HOME/.password_set"
+            echo "Password set. This prompt will not appear again."
+        else
+            echo "Password setup failed. You will be prompted again next login."
+        fi
+        echo
+        ;;
+    P)
+        touch "$HOME/.password_set"
+        ;;
+esac
+HOOK
+chown "$VPS_USER:$VPS_USER" "$FIRSTLOGIN"
+chmod 700 "$FIRSTLOGIN"
+
 # 5. Homebrew (as the user, not root)
 #
 # Critical: every `sudo -Hu "$VPS_USER" bash` block must `cd "$HOME"` first.
@@ -540,6 +575,7 @@ append_missing "$BASHRC" 'command -v starship >/dev/null && eval "$(starship ini
 append_missing "$BASHRC" 'command -v zoxide >/dev/null && eval "$(zoxide init bash)"'     "$VPS_USER" "$VPS_USER"
 append_missing "$BASHRC" 'command -v eza >/dev/null && alias ls="eza --group-directories-first"' "$VPS_USER" "$VPS_USER"
 append_missing "$BASHRC" 'command -v bat >/dev/null && alias cat="bat --paging=never"'    "$VPS_USER" "$VPS_USER"
+append_missing "$BASHRC" '[ -f "$HOME/.firstlogin-passwd.sh" ] && . "$HOME/.firstlogin-passwd.sh"' "$VPS_USER" "$VPS_USER"
 
 echo "===== bootstrap done @ $(date -Is) ====="
 BOOTSTRAP_EOF
