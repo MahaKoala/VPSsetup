@@ -230,6 +230,19 @@ bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-
 ```
 
 **Non-interactive (CI / agents / scripted fleet):**
+  Deploy path (cloud-init.yaml AND firstrun.sh) now runs in order:                                                         
+  1. vps-bootstrap.sh — base packages (incl. bc, jq), user creation, SSH keys, first-login password hook, Homebrew,        
+  ~/.vps-shell.sh sentinel + auto-resource loader                                                                          
+  2. vps-harden.sh — UFW, SSH lockdown, fail2ban, etc.                                                                     
+  3. vps-tools.sh (newly added to the path) — Claude Code installer + statusline auto-apply, AI tooling (opencode, crush,  
+  codex, ollama, etc.)                                                                                                     
+                                                                                                                           
+  A fresh VPS provisioned with either cloud-init.yaml or firstrun.sh now gets:                                             
+  - Logged-in maha with eza ls/la aliases active immediately                                                               
+  - Prompted to set a password on first interactive login                                                                  
+  - Claude Code with your custom statusline already wired into ~/.claude/settings.json                                     
+  - Re-running the bootstrap won't leave stale alias text, and existing shells auto-pick-up changes via PROMPT_COMMAND     
+  mtime watch
 
 ```bash
 ssh root@<server-ip> "curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh | \
