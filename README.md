@@ -151,6 +151,9 @@ If you skipped `vps-tools.sh` and want to add AI tooling later (or refresh it), 
 
 ```bash
 sudo bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-tools.sh)
+
+or as User:
+curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-tools.sh | sudo bash
 ```
 
 It reads the existing `/etc/vps/bootstrap.env` to find `VPS_USER` and installs everything under that user's Homebrew. **Must be run as root** — the env file is mode 600 and the script aborts with a clear error if invoked as a regular user.
