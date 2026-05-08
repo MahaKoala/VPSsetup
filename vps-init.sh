@@ -366,7 +366,7 @@ apt-get install -y --no-install-recommends \
   sudo curl wget git ca-certificates gnupg2 lsb-release \
   build-essential pkg-config lsof procps file \
   python3 python3-pip python3-venv \
-  fd-find unzip zip jq htop tmux rsync \
+  fd-find unzip zip jq bc htop tmux rsync \
   software-properties-common apt-transport-https
 if [[ ! -e /usr/local/bin/fd ]] && command -v fdfind >/dev/null; then
     ln -sf "$(command -v fdfind)" /usr/local/bin/fd

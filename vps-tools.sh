@@ -77,6 +77,18 @@ if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
         _st warn "claude-code" "installer failed"
     fi
 
+    echo "--- Claude Code statusline (CustomConfigs) ---"
+    statusline_url="https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/CustomConfigs/claude-statusline-export.tar.gz"
+    statusline_tmp="$(mktemp -d)"
+    if curl -fsSL "$statusline_url" -o "$statusline_tmp/bundle.tar.gz" \
+       && tar -xzf "$statusline_tmp/bundle.tar.gz" -C "$statusline_tmp" \
+       && bash "$statusline_tmp/claude-statusline-export/install.sh" >/dev/null 2>&1; then
+        _st ok "claude-statusline" "installed"
+    else
+        _st warn "claude-statusline" "installer failed"
+    fi
+    rm -rf "$statusline_tmp"
+
     echo "--- terminal niceties ---"
     for pkg in lazygit glow ranger zoxide btop chafa csvlens; do
         if brew list --formula "$pkg" >/dev/null 2>&1; then

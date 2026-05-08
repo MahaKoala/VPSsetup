@@ -66,7 +66,7 @@ apt-get install -y --no-install-recommends \
     sudo curl wget git ca-certificates gnupg2 lsb-release \
     build-essential pkg-config lsof procps file \
     python3 python3-pip python3-venv \
-    fd-find unzip zip jq htop tmux rsync \
+    fd-find unzip zip jq bc htop tmux rsync \
     software-properties-common apt-transport-https
 
 # fd-find quirk on Debian/Ubuntu
