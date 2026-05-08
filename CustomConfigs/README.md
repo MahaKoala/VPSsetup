@@ -8,22 +8,13 @@ Custom statusline for Claude Code showing:
 - Context window usage
 - 5-hour and 7-day rate limits with pace arrows and time-to-reset
 - Prompt cache hit rate
-  EXAMPLE:
-  ┌────────────────────────┬──────────────────────────────────────────────────────────────────────────┐                    
-  │        Segment         │                                 Meaning                                  │
-  ├────────────────────────┼──────────────────────────────────────────────────────────────────────────┤                    
-  │ Opus 4.7 (1M)          │ Model + 1M-context variant. Amber = Opus family.                         │
-  ├────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
-  │ ~                      │ Current dir is $HOME (you're not in a project subdir right now).         │                    
-  ├────────────────────────┼──────────────────────────────────────────────────────────────────────────┤                    
-  │ ctx 13%                │ This conversation has filled 13% of the model's 1M-token context window. │                    
-  ├────────────────────────┼──────────────────────────────────────────────────────────────────────────┤                    
-  │ [5hr] 4h : 7% : 3%↑ 2h │ 5-hour Max quota — see breakdown below.                                  │
-  ├────────────────────────┼──────────────────────────────────────────────────────────────────────────┤                    
-  │ [7d] 117h : 25% : 30%↓ │ 7-day Max quota — see breakdown below.                                   │
-  ├────────────────────────┼──────────────────────────────────────────────────────────────────────────┤                    
-  │ cache 99%              │ 99% of input tokens were served from prompt cache. Excellent.            │
-  └────────────────────────┴──────────────────────────────────────────────────────────────────────────┘                    
+  EXAMPLE:                 
+  │ Opus 4.7 (1M) │ Model + 1M-context variant. Amber = Opus family. 
+  │ ~                      │ Current dir is $HOME (you're not in a project subdir right now).                                           
+  │ ctx 13%                │ This conversation has filled 13% of the model's 1M-token context window.                                    
+  │ [5hr] 4h : 7% : 3%↑ 2h │ 5-hour Max quota — see breakdown below.                                                   
+  │ [7d] 117h : 25% : 30%↓ │ 7-day Max quota — see breakdown below.                                                   
+  │ cache 99%              │ 99% of input tokens were served from prompt cache. Excellent.                             
                                                                                            
   Decoding the [5hr] triple 4h : 7% : 3%↑ 2h:                                                                              
                                                                                            
