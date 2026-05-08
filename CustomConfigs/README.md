@@ -8,7 +8,22 @@ Custom statusline for Claude Code showing:
 - Context window usage
 - 5-hour and 7-day rate limits with pace arrows and time-to-reset
 - Prompt cache hit rate
+  EXAMPLE:
+- Opus 4.7 (1M) — model + 1M-context variant (amber = Opus family).
+  - ctx 4% — context window 4% full for this conversation.
+  - 37m:42%:87%↓ — your 5-hour Max limit:
+    - 37m until reset
+    - 42% used
+    - 87% of the 5h window has elapsed
+    - ↓ = under-consuming (projected to finish well under cap; green)
+  - 117h:24%:29%↓ — your 7-day Max limit:
+    - 117h until reset
+    - 24% used
+    - 29% of the week elapsed
+    - ↓ = on track, plenty of headroom
+  - cache 98% — prompt-cache hit rate (cache_read / (cache_read + cache_creation)). 98% is excellent — almost everything is being served from cache.
 
+  Pace arrow legend (from the script): ↑ red = will exhaust before reset, → yellow = on pace, ↓ green = under-consuming.
 ## Install
 
 ```bash
