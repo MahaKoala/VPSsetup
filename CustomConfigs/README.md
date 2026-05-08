@@ -1,22 +1,42 @@
-To restore on a new machine:
+# Claude Code statusline (Ava's setup)
 
-1. Install dependencies:
-   - jq (brew install jq  /  apt install jq)
-   - bc (usually preinstalled)
+Custom statusline for Claude Code showing:
 
-2. Copy the script:
-   mkdir -p ~/.claude
-   cp statusline-command.sh ~/.claude/statusline-command.sh
-   chmod +x ~/.claude/statusline-command.sh
+- Model name (color-coded by family)
+- Current working directory (with `~` for `$HOME`)
+- Git branch + dirty file count
+- Context window usage
+- 5-hour and 7-day rate limits with pace arrows and time-to-reset
+- Prompt cache hit rate
 
-3. Add to ~/.claude/settings.json (merge with existing settings):
-   {
-     "statusLine": {
-       "type": "command",
-       "command": "bash ~/.claude/statusline-command.sh"
-     }
-   }
+## Install
 
-   See settings.snippet.json for the full settings.json from the source machine.
+```bash
+tar xzf claude-statusline-export.tar.gz
+cd claude-statusline-export
+./install.sh
+```
 
-4. Restart Claude Code.
+Then restart Claude Code.
+
+## What `install.sh` does
+
+1. Checks for `jq` and `bc` (and bails out with a hint if either is missing).
+2. Copies `statusline-command.sh` into `~/.claude/` and makes it executable.
+3. Merges the `statusLine` block into `~/.claude/settings.json` using `jq`. If the file already exists, a timestamped backup is saved alongside it (`settings.json.bak.YYYYMMDD-HHMMSS`).
+
+No manual JSON editing required.
+
+## Dependencies
+
+- `jq` — `brew install jq` (macOS) or `sudo apt install jq` (Debian/Ubuntu)
+- `bc` — typically preinstalled
+
+## Customising
+
+The script honours `$CLAUDE_CONFIG_DIR` if set (otherwise uses `~/.claude`).
+
+## Notes
+
+- Designed for Claude Pro / Max plans (reads `rate_limits` from the statusline JSON).
+- The script's `budget`, `usage`, and `sync` subcommands use BSD/macOS `sed -i ''` syntax and won't work on Linux without modification — but those are only used for API-plan budget tracking and aren't relevant for Pro/Max users.
