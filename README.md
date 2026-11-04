@@ -228,6 +228,31 @@ The harden script **refuses to run** if you set `PUBLIC_SSH_ALLOWED=0` before yo
 
 New accounts receive **no preset password**. The default is `FIRST_LOGIN_PASSWORD_PROMPT=0`; `vps-bootstrap.sh` does not install a password hook, and `vps-harden.sh` disables SSH password login. A password prompt from your client usually means it did not offer a matching private key. You can opt in to the old first-login prompt with `FIRST_LOGIN_PASSWORD_PROMPT=1`. See [password policy](README_FirstLoginPassword.md).
 
+## ✨ Optional Crush vibe-coding worker
+
+> **New in PR #3:** Enable Charm Crush separately from the complete AI-tool suite. **Not part of the default cloud-init provisioning.**
+
+| What you want | Setting |
+|:---|:---|
+| Core VPS only | `INSTALL_VIBECODE_CRUSH=0` (default) |
+| Crush + selected MCP/LSP profiles | `INSTALL_VIBECODE_CRUSH=1`, `INSTALL_BREW=1` |
+| Complete legacy AI toolkit | `INSTALL_TOOLS=1` (independent option) |
+| Standalone Crush on an existing VPS | `sudo /usr/local/sbin/vps-vibecode-crush.sh` |
+
+**Non-cloud-init one-liner:**
+
+```bash
+sudo env VPS_USER=maha SSH_ID=mahakoala NONINTERACTIVE=1 \
+  INSTALL_BREW=1 INSTALL_VIBECODE_CRUSH=1 \
+  bash -c 'curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh | bash'
+```
+
+Crush uses the modern `crushrc` format and supports **Anthropic, OpenAI, OpenRouter, Kimi/Moonshot, Kimi Code, GLM (Z.ai/Zhipu), Grok (xAI), and DeepSeek**, with per-user secrets at runtime and separate profiles for MCPs and LSPs.
+
+[**Explore the illustrated Crush setup and provider matrix →**](README_VibecodeCrush.md)
+
+---
+
 ## 🤖 Claude Code statusline
 
 `vps-tools.sh` installs Claude Code (Anthropic's CLI agent) and applies a custom statusline showing:
@@ -316,7 +341,8 @@ For deeper coverage of failure modes, recovery commands, and how to read `Verify
 |---|---|
 | [`vps-bootstrap.sh`](vps-bootstrap.sh) | Apt packages, hostname, dynamic user, validated SSH public keys, optional Homebrew and opt-in password hook |
 | [`vps-harden.sh`](vps-harden.sh) | OpenSSH, UFW without reset, Fail2Ban, updates, sysctl and Tailscale installation/join; access policies are managed separately |
-| [`vps-tools.sh`](vps-tools.sh) | Claude Code + custom statusline, opencode, crush, codex, tmuxai, ollama, lazygit, system-wide `claude` symlink |
+| [`vps-tools.sh`](vps-tools.sh) | Optional full AI tool suite (Claude, OpenCode, Crush, Codex, tmuxai, Ollama) |
+| [`vps-vibecode-crush.sh`](vps-vibecode-crush.sh) | **Optional standalone Crush setup:** providers, MCP/LSP profiles and slash commands |
 | [`VerifyChecklist.sh`](VerifyChecklist.sh) | Post-install audit. `--quiet` for cron, `--report` to re-print last install tally |
 | [`vps-swap.sh`](vps-swap.sh) | RAM-aware swap setup, independent of cloud-init |
 | [`firstrun.sh`](firstrun.sh) | Compatibility launcher for the portable one-line installer |
@@ -334,7 +360,7 @@ For deeper coverage of failure modes, recovery commands, and how to read `Verify
 | File | Purpose |
 |---|---|
 | [`bootstrap.env`](bootstrap.env) | Single source of truth. Sourced by all workers |
-| [`cloud-init.yaml`](cloud-init.yaml) | Provider user-data: writes `bootstrap.env`, downloads and calls the common installer |
+| [`cloud-init.yaml`](cloud-init.yaml) | Minimal provider user-data, calls common installer; **Crush is not enabled by default** |
 | [`tailscale.json`](tailscale.json) | Reference Tailscale ACL: tag owners, SSH access policy |
 | [`CustomConfigs/`](CustomConfigs/) | Bundle for the Claude Code statusline (downloaded by `vps-tools.sh`) |
 
@@ -430,7 +456,8 @@ These are deliberately *not* automated in the scripts above because they require
 | [README_VPSscripts.md](README_VPSscripts.md) | Per-script overview of `vps-bootstrap.sh` / `vps-harden.sh` / `vps-tools.sh` and design constraints |
 | [README_SingleFileVPSinit.md](README_SingleFileVPSinit.md) | One-line installation and standalone worker usage |
 | [README_SSHIDscript.md](README_SSHIDscript.md) | `addnew-sshid-key.sh` / `addupdate-sshid-key.sh` — adding sshid.io keys post-bootstrap |
-| [README_FirstLoginPassword.md](README_FirstLoginPassword.md) | First-login password prompt hook — design and customization |
+| [README_FirstLoginPassword.md](README_FirstLoginPassword.md) | SSH-key-only default and optional password prompt |
+| [README_VibecodeCrush.md](README_VibecodeCrush.md) | ✨ Optional Crush worker, provider matrix, MCP and LSP profiles |
 | [CustomConfigs/README.md](CustomConfigs/README.md) | Claude Code statusline bundle — install script, customization, deps |
 
 ---
