@@ -31,7 +31,8 @@ The `VPS_SETUP_REF` value selects the worker versions. New configuration is save
 3. Runs swap, base bootstrap, and hardening, in that order.
 4. Runs the optional full tools worker only when `INSTALL_TOOLS=1` and `INSTALL_BREW=1`.
 5. **Separately**, runs the modular Crush worker only if `INSTALL_VIBECODE_CRUSH=1`. This does not require `INSTALL_TOOLS=1`.
-6. Runs verification with `RUN_VERIFY=1` or for interactive installations.
+6. Optionally stages (but never executes) the DeepSeek Super-Agent research source with `STAGE_DEEPSEEK_SUPERAGENT=1`.
+7. Runs verification with `RUN_VERIFY=1` or for interactive installations.
 
 Cloud-init calls **this same** `vps-init.sh` with its prewritten environment file. It does not contain or run a separate copy of bootstrap/harden logic.
 
@@ -61,6 +62,7 @@ All workers read `/etc/vps/bootstrap.env` when present; they do not depend on an
 | `CRUSH_MCP_PROFILE` | `core` | `none`, `core`, or `extended` MCPs |
 | `CRUSH_LSP_PROFILE` | `web,python` | Selected language servers: `web,python,go,rust,none` |
 | `CRUSH_INSTALL_ROOT` | `0` | Root Crush profile is opt-in; user account default |
+| `STAGE_DEEPSEEK_SUPERAGENT` | `0` | Clone research prototype only; no build or execution |
 | `PUBLIC_SSH_ALLOWED` | `1` | Leave public SSH available initially |
 | `TAILNET_SSH_VERIFIED` | `0` | Must be `1` **after** a successful separate tailnet SSH login to disable public SSH |
 | `TAILSCALE_AUTHKEY` | empty | Installs Tailscale; authenticate later without storing a permanent key in user-data |
