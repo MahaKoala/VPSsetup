@@ -63,6 +63,7 @@ for original, expected in (
         text=True,
     )
     assert output == expected, f"{original}: expected {expected}, got {output}"
+assert harden_text.index('systemctl mask ssh.socket') > harden_text.index('EFFECTIVE="$(sshd -T)"'), "Do not mask socket before validating SSH policy"
 assert "FIRST_LOGIN_PASSWORD_PROMPT" in (ROOT / "vps-bootstrap.sh").read_text()
 assert "ECDSA-SK" in (ROOT / "vps-bootstrap.sh").read_text()
 
