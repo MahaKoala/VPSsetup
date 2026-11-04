@@ -145,7 +145,8 @@ if [[ "$ENABLE_PASSWORDLESS_SUDO" == "1" ]]; then
 fi
 
 # ---------- 4. SSH keys ----------
-USER_HOME="/home/${VPS_USER}"
+USER_HOME="$(getent passwd "$VPS_USER" | cut -d: -f6)"
+[[ -n "$USER_HOME" && -d "$USER_HOME" ]] || { echo "Missing home for $VPS_USER" >&2; exit 1; }
 install -d -o "$VPS_USER" -g "$VPS_USER" -m 700 "${USER_HOME}/.ssh"
 AUTH="${USER_HOME}/.ssh/authorized_keys"
 touch "$AUTH"; chown "$VPS_USER:$VPS_USER" "$AUTH"; chmod 600 "$AUTH"
