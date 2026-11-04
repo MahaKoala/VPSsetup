@@ -780,3 +780,15 @@ sudo grep -E '^(ALLOW_PASSWORD_AUTH|PERMIT_ROOT_LOGIN|VPS_USER)=' /etc/vps/boots
 ```
 
 Do **not** disable the safety check or blindly delete cloud/provider SSH drop-ins. The corrected worker reports which setting conflicts. To repair just SSH hardening after reviewing the configuration, update the worker and run `sudo bash -n /usr/local/sbin/vps-harden.sh && sudo /usr/local/sbin/vps-harden.sh`. Keep the current console open until a second SSH login succeeds.
+
+### Failed hardening left `ssh.socket` masked
+
+Older versions switched off socket activation before verifying `sshd -T`. After a failed run, check **before rebooting**:
+
+```bash
+systemctl is-active ssh.service
+systemctl is-enabled ssh.service
+systemctl is-enabled ssh.socket
+```
+
+If `ssh.service` is not enabled, keep the root console open and run `sudo systemctl enable --now ssh.service`, then `sudo sshd -t`. Only reboot after checking that at least one SSH startup path is enabled and testing a separate login. Updated hardening defers the socket transition until SSH validation passes.
