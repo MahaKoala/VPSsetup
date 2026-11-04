@@ -179,21 +179,37 @@ fetch_and_add() {
         return 1
     fi
 
-    if ! grep -qE '^(ssh-(rsa|ed25519|dss)|ecdsa-sha2-)' "$TMP"; then
-        warn "response from $url did not look like an SSH key (skipping)"
-        return 1
-    fi
-
-    local added=0 skipped=0 line
-    while IFS= read -r line; do
-        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-        if grep -qxF "$line" "$AUTH_FILE"; then
+    # Validate every key, not just the first line of an HTTP 200 response.
+    # SSHID may return multiline responses or HTML/error documents.
+    local added=0 skipped=0 invalid=0 line kind blob comment key validate_file
+    validate_file="$(mktemp)"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        [[ -n "$line" && "$line" != \#* ]] || continue
+        read -r kind blob comment <<< "$line"
+        case "$kind" in
+            ssh-rsa|ssh-ed25519|ecdsa-sha2-*|sk-ecdsa-sha2-nistp256@openssh.com|sk-ssh-ed25519@openssh.com) ;;
+            *) invalid=$((invalid + 1)); continue ;;
+        esac
+        [[ -n "$blob" ]] || { invalid=$((invalid + 1)); continue; }
+        key="$kind $blob"
+        [[ -n "$comment" ]] && key+=" $comment"
+        printf '%s\n' "$key" > "$validate_file"
+        if ! ssh-keygen -lf "$validate_file" >/dev/null 2>&1; then
+            invalid=$((invalid + 1))
+            continue
+        fi
+        if awk -v kind="$kind" -v blob="$blob" \
+            '$1==kind && $2==blob {found=1} END {exit !found}' "$AUTH_FILE"; then
             skipped=$((skipped + 1))
         else
-            printf '%s\n' "$line" >> "$AUTH_FILE"
+            printf '%s\n' "$key" >> "$AUTH_FILE"
             added=$((added + 1))
         fi
     done < "$TMP"
+    rm -f "$validate_file"
+    (( added + skipped > 0 )) || { warn "no valid SSH keys at $url"; return 1; }
+    (( invalid == 0 )) || warn "$type: ignored $invalid malformed/non-key lines"
 
     ok "$type: added $added, already present $skipped"
     return 0
@@ -203,16 +219,16 @@ fetch_and_add() {
 case "${KEY_TYPE^^}" in
     ALL)
         any=0
-        for t in RSA ED25519 ECDSA; do
+        for t in RSA ED25519 ECDSA ECDSA-SK; do
             fetch_and_add "$t" && any=1 || true
         done
         (( any )) || die "no keys were fetched for '$SSHID'"
         ;;
-    RSA|ED25519|ECDSA)
+    RSA|ED25519|ECDSA|ECDSA-SK)
         fetch_and_add "${KEY_TYPE^^}" || die "failed to fetch $KEY_TYPE key for '$SSHID'"
         ;;
     *)
-        die "invalid key type: $KEY_TYPE (use RSA, ED25519, ECDSA, or ALL)"
+        die "invalid key type: $KEY_TYPE (use RSA, ED25519, ECDSA, ECDSA-SK, or ALL)"
         ;;
 esac
 
