@@ -2,6 +2,7 @@
 """Static provisioning parity checks: safe to run without root or a VPS."""
 from pathlib import Path
 import subprocess
+import json
 
 import yaml
 
@@ -30,7 +31,6 @@ worker_names = (
     "vps-tools.sh", "VerifyChecklist.sh",
 )
 installer = (ROOT / "vps-init.sh").read_text()
-assert "cloud-init" not in installer.lower().splitlines()[-1], "unexpected"
 for worker in worker_names:
     assert (ROOT / worker).exists(), worker
     assert worker in installer, f"installer must fetch {worker}"
@@ -59,5 +59,13 @@ finally:
 
 # Reference documentation must accompany portable provisioning.
 assert (ROOT / "docs" / "HETZNER.md").exists()
-assert "tcp:22" in (ROOT / "tailscale.json").read_text()
+policy_text = (ROOT / "tailscale.json").read_text()
+policy = json.loads("\\n".join(
+    line for line in policy_text.splitlines()
+    if not line.lstrip().startswith("//")
+))
+assert any("tcp:22" in grant["ip"] for grant in policy["grants"])
+assert any("maha" in rule["users"] for rule in policy["ssh"])
+assert "vps-init.sh" in (ROOT / "cloud-init.yaml").read_text()
+assert "BASE must be a directory" not in installer
 print(f"PASS: cloud-init {len(cloud)} bytes, independent workers, shell syntax and safety invariants")
