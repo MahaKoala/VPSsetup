@@ -82,44 +82,22 @@ You will want these in hand:
   - Raw `authorized_keys` content
 - A Tailscale auth key *(strongly recommended)* — generate at [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys). Make it **ephemeral**, **tagged** (e.g. `tag:vps`), and short-lived (1 hour is plenty). The tag(s) you choose at key generation **must already exist** in `tagOwners` in your `tailscale.json` ACL — the script defaults to using those tags as-is and *not* overriding them with `--advertise-tags`, which is the safe path.
 
-### Path A — vps-init wizard (recommended)
+### Path A — one-line installer (any Linux VPS, cloud-init not required)
 
-`vps-init.sh` is self-contained: it writes `bootstrap.env` plus all three worker scripts to `/usr/local/sbin/`, runs them in order, then prints an install report. Re-runnable.
-
-**From your laptop, in one shot:**
+The one-line installer downloads the **shared** worker scripts, then runs swap, bootstrap, hardening, and optional tools. Unlike the old design, `vps-init.sh` does **not** embed separate worker copies.
 
 ```bash
-ssh -t root@<server-ip> "bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)"
+curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh | sudo bash
 ```
 
-The `-t` is important — it allocates a TTY so the wizard's prompts work over the SSH session. The wizard asks for username, SSH key sources, Tailscale key, and hardening choices, then prints a review screen before changing anything.
-
-**Already SSH'd in as root?**
+For unattended provisioning, supply a public-key source:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh)
+sudo env VPS_USER=maha SSH_ID=mahakoala NONINTERACTIVE=1 RUN_VERIFY=1 \
+  bash -c 'curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh | bash'
 ```
 
-**Non-interactive (CI / agents / scripted fleet):**
-
-```bash
-ssh root@<server-ip> "curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh | \
-  VPS_USER=pink \
-  SSH_ID=mahakoala \
-  VPS_ROLE=staging \
-  TAILSCALE_AUTHKEY=tskey-auth-xxxxxxxxxxxx \
-  INSTALL_TOOLS=1 \
-  RUN_VERIFY=1 \
-  NONINTERACTIVE=1 bash"
-```
-
-| Var | Effect |
-|---|---|
-| `INSTALL_TOOLS=1` | Add the AI/agent tooling step (opencode, crush, codex, claude-code + statusline, ollama, lazygit, etc.). Default `0`. Interactive wizard prompts for it. |
-| `RUN_VERIFY=1` | Run `VerifyChecklist.sh` at the end. Default off for non-interactive; interactive runs always prompt. |
-| `TAILSCALE_TAGS=…` | Override the tags advertised on `tailscale up`. **Leave unset** to use whatever tags the auth key was generated with — overriding requires every tag be in `tagOwners` AND within the key's allowed set, which is the most common cause of silent join failures. |
-
-All [bootstrap.env](bootstrap.env) variables can be passed this way. Anything you don't set falls back to the defaults baked into `vps-init.sh`. See [README_SingleFileVPSinit.md](README_SingleFileVPSinit.md) for the full env-var reference.
+Set `VPS_SETUP_REF` to a reviewed commit or tag when you want reproducible workers. See [the portable installer guide](README_SingleFileVPSinit.md). Any worker can also run independently from `/usr/local/sbin` once downloaded.
 
 ### Path B — Manual / split files
 
@@ -160,7 +138,11 @@ It reads the existing `/etc/vps/bootstrap.env` to find `VPS_USER` and installs e
 
 ### Path C — Cloud-init providers
 
-Paste the contents of [cloud-init.yaml](cloud-init.yaml) into the provider's **User Data** / **Cloud Config** field at server creation time. Everything happens on first boot before you ever SSH in. Edit the inline `bootstrap.env` block in the YAML to set your `VPS_USER`, `SSH_ID`, `TAILSCALE_AUTHKEY`, etc. The cloud-init flow runs all three scripts (`vps-bootstrap.sh`, `vps-harden.sh`, `vps-tools.sh`) in order — Claude Code and the custom statusline land turnkey.
+Paste [cloud-init.yaml](cloud-init.yaml) into the provider's user-data field. Its first line must be `#cloud-config`. Edit the instance-specific hostname, user, SSH key source and optionally `VPS_SETUP_REF`.
+
+Cloud-init writes a root-only `bootstrap.env` and calls **the same** `vps-init.sh` used by non-cloud-init providers. The standalone workers remain authoritative. Dynamic swap and SSH-key-only login are enabled by default; Homebrew, Docker and AI tools are opt-in.
+
+See [Hetzner-specific setup and recovery instructions](docs/HETZNER.md).
 
 ### End-of-install report (Path A only)
 
@@ -249,22 +231,17 @@ Once you've confirmed you can reach the VPS over Tailscale, eliminate the public
 
 ```bash
 sudo sed -i 's/^PUBLIC_SSH_ALLOWED=.*/PUBLIC_SSH_ALLOWED="0"/' /etc/vps/bootstrap.env
+echo 'TAILNET_SSH_VERIFIED="1"' | sudo tee -a /etc/vps/bootstrap.env
 sudo /usr/local/sbin/vps-harden.sh
 ```
 
-The harden script **refuses to run** if you set `PUBLIC_SSH_ALLOWED=0` while Tailscale isn't connected — it won't lock you out. After it succeeds, the `--- SSH access summary ---` block at the bottom shows the verified tailnet rule and confirms root key access is still available as the recovery hatch.
+The harden script **refuses to run** if you set `PUBLIC_SSH_ALLOWED=0` before you set `TAILNET_SSH_VERIFIED=1` after testing another session, or if Tailscale is disconnected — it won't lock you out. After it succeeds, the `--- SSH access summary ---` block at the bottom shows the verified tailnet rule and confirms root key access is still available as the recovery hatch.
 
 ---
 
-## 🔑 First-login password prompt
+## 🔑 SSH-key-only initial login
 
-When the bootstrap creates the primary user, `useradd -m` leaves the password locked. The first time anyone gets an interactive shell as that user — via `ssh`, `su user`, `su - user`, or a console login — a hook drops them into a `passwd` prompt automatically, then self-disables.
-
-This closes the gap where the locked-password state plus `NOPASSWD` sudo means the user never has a password until they unexpectedly need one (sudo with `ENABLE_PASSWORDLESS_SUDO=0`, console rescue, switching to password-or-key auth, etc.).
-
-The hook lives at `~/.firstlogin-passwd.sh`, is sourced by `~/.vps-shell.sh`, and writes `~/.password_set` once the user successfully sets a password (preventing the prompt on subsequent logins). Full design notes and customization options: **[README_FirstLoginPassword.md](README_FirstLoginPassword.md)**.
-
----
+New accounts receive **no preset password**. The default is `FIRST_LOGIN_PASSWORD_PROMPT=0`; `vps-bootstrap.sh` does not install a password hook, and `vps-harden.sh` disables SSH password login. A password prompt from your client usually means it did not offer a matching private key. You can opt in to the old first-login prompt with `FIRST_LOGIN_PASSWORD_PROMPT=1`. See [password policy](README_FirstLoginPassword.md).
 
 ## 🤖 Claude Code statusline
 
@@ -352,12 +329,12 @@ For deeper coverage of failure modes, recovery commands, and how to read `Verify
 
 | File | Responsibility |
 |---|---|
-| [`vps-bootstrap.sh`](vps-bootstrap.sh) | Apt base packages (incl. `bc`, `jq`), hostname, primary user + sudoers, SSH keys, Homebrew, `~/.vps-shell.sh` sentinel + auto-resource loader, first-login password hook |
-| [`vps-harden.sh`](vps-harden.sh) | UFW rules, fail2ban, unattended-upgrades, sshd lockdown via drop-in, sysctl, Tailscale join + tag/SSH ACL |
+| [`vps-bootstrap.sh`](vps-bootstrap.sh) | Apt packages, hostname, dynamic user, validated SSH public keys, optional Homebrew and opt-in password hook |
+| [`vps-harden.sh`](vps-harden.sh) | OpenSSH, UFW without reset, Fail2Ban, updates, sysctl and Tailscale installation/join; access policies are managed separately |
 | [`vps-tools.sh`](vps-tools.sh) | Claude Code + custom statusline, opencode, crush, codex, tmuxai, ollama, lazygit, system-wide `claude` symlink |
 | [`VerifyChecklist.sh`](VerifyChecklist.sh) | Post-install audit. `--quiet` for cron, `--report` to re-print last install tally |
-| [`firstrun.sh`](firstrun.sh) | Manual one-shot script (no cloud-init). Pulls + runs all three workers in order |
-| [`vps-init.sh`](vps-init.sh) | Self-contained orchestrator: writes the three workers as embedded heredocs, runs them, prints the install report |
+| [`vps-swap.sh`](vps-swap.sh) | RAM-aware swap setup, independent of cloud-init |\n| [`firstrun.sh`](firstrun.sh) | Compatibility launcher for the portable one-line installer |
+| [`vps-init.sh`](vps-init.sh) | Small provider-neutral installer: saves config, downloads the standalone workers and runs them |
 
 ### Helper scripts
 
@@ -371,7 +348,7 @@ For deeper coverage of failure modes, recovery commands, and how to read `Verify
 | File | Purpose |
 |---|---|
 | [`bootstrap.env`](bootstrap.env) | Single source of truth. Sourced by all workers |
-| [`cloud-init.yaml`](cloud-init.yaml) | Provider user-data: writes `bootstrap.env`, fetches all three workers, runs them |
+| [`cloud-init.yaml`](cloud-init.yaml) | Provider user-data: writes `bootstrap.env`, downloads and calls the common installer |
 | [`tailscale.json`](tailscale.json) | Reference Tailscale ACL: tag owners, SSH access policy |
 | [`CustomConfigs/`](CustomConfigs/) | Bundle for the Claude Code statusline (downloaded by `vps-tools.sh`) |
 
@@ -476,7 +453,7 @@ These are deliberately *not* automated in the scripts above because they require
 
 Issues and pull requests welcome at <https://github.com/MahaKoala/VPSsetup>.
 
-**When editing the bootstrap pipeline,** keep the **standalone scripts** (`vps-bootstrap.sh`, `vps-harden.sh`, `vps-tools.sh`) as the source of truth — they are what `cloud-init.yaml` and `firstrun.sh` curl directly. `vps-init.sh` embeds copies of all three as heredocs (`BOOTSTRAP_EOF`, `HARDEN_EOF`, `TOOLS_EOF`); these need to be re-synced from the standalones after script changes. Run `bash -n *.sh` before pushing.
+**When editing the bootstrap pipeline,** keep the **standalone scripts** (`vps-bootstrap.sh`, `vps-harden.sh`, `vps-tools.sh`) as the source of truth — they are what `cloud-init.yaml` and `firstrun.sh` curl directly. `vps-init.sh` only orchestrates the standalone workers; do not reintroduce embedded worker copies. Run `bash -n *.sh` and the PR validation workflow before merging.
 
 ---
 
