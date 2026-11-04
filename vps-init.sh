@@ -75,6 +75,8 @@ if (( interactive )); then
         INSTALL_VIBECODE_CRUSH=1
         INSTALL_BREW=1
     fi
+    read -r -p "Stage DeepSeek Super-Agent research source (no execution)? [y/N]: " answer </dev/tty
+    [[ "$answer" =~ ^[Yy] ]] && STAGE_DEEPSEEK_SUPERAGENT=1
     read -r -p "Install Tailscale? [Y/n]: " answer </dev/tty
     [[ "$answer" =~ ^[Nn] ]] && INSTALL_TAILSCALE=0
     if [[ "$INSTALL_TAILSCALE" == "1" ]]; then
@@ -141,6 +143,13 @@ if [[ "${INSTALL_VIBECODE_CRUSH:-0}" == "1" ]]; then
     chmod 700 /usr/local/sbin/vps-vibecode-crush.sh
     bash -n /usr/local/sbin/vps-vibecode-crush.sh
     /usr/local/sbin/vps-vibecode-crush.sh
+fi
+if [[ "${STAGE_DEEPSEEK_SUPERAGENT:-0}" == "1" ]]; then
+    echo "=== Optional stage: DeepSeek Super-Agent source only ==="
+    download "vps-deepseek-superagent.sh" "/usr/local/sbin/vps-deepseek-superagent.sh"
+    chmod 700 /usr/local/sbin/vps-deepseek-superagent.sh
+    bash -n /usr/local/sbin/vps-deepseek-superagent.sh
+    /usr/local/sbin/vps-deepseek-superagent.sh
 fi
 if [[ "$RUN_VERIFY" == "1" || "$interactive" == "1" ]]; then
     echo "=== Stage 5: verification ==="
