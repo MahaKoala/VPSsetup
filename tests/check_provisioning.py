@@ -60,7 +60,7 @@ finally:
 # Reference documentation must accompany portable provisioning.
 assert (ROOT / "docs" / "HETZNER.md").exists()
 policy_text = (ROOT / "tailscale.json").read_text()
-policy = json.loads("\\n".join(
+policy = json.loads("\n".join(
     line for line in policy_text.splitlines()
     if not line.lstrip().startswith("//")
 ))
