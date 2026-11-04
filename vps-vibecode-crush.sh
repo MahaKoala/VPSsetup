@@ -170,9 +170,23 @@ deploy_user() {
     chown "$user:$group" "$target"
     chmod 600 "$target"
   elif ! grep -qF 'vpssetup-managed.crushrc' "$target"; then
-    printf '\n%s\n' '# VPSsetup managed tools, loaded before your custom overrides' \
-      'source "$HOME/.config/crush/vpssetup-managed.crushrc"' >> "$target"
-    status warn "config" "$user existing crushrc extended; review ordering"
+    # Put VPSsetup defaults BEFORE existing custom configuration so local
+    # provider/model/permission choices retain priority on every re-run.
+    local temp_original
+    temp_original="$(mktemp)"
+    {
+      if [[ "$(head -n 1 "$target")" == '#!'* ]]; then
+        head -n 1 "$target"
+        printf '%s\n' 'source "$HOME/.config/crush/vpssetup-managed.crushrc"'
+        tail -n +2 "$target"
+      else
+        printf '%s\n' 'source "$HOME/.config/crush/vpssetup-managed.crushrc"'
+        cat "$target"
+      fi
+    } > "$temp_original"
+    install -m 600 -o "$user" -g "$group" "$temp_original" "$target"
+    rm -f "$temp_original"
+    status ok "config" "$user existing crushrc preserved; overrides load last"
   fi
   status ok "user" "$user crushrc + scoped profiles installed"
 }
