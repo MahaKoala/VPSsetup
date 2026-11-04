@@ -46,6 +46,7 @@ fi
 : "${SSH_AUTHORIZED_KEYS:=}"
 : "${INSTALL_BREW:=0}"
 : "${INSTALL_TOOLS:=0}"
+: "${INSTALL_VIBECODE_CRUSH:=0}"
 : "${VPS_SETUP_REF:=main}"
 : "${INSTALL_TAILSCALE:=1}"
 : "${TAILSCALE_AUTHKEY:=}"
@@ -69,6 +70,11 @@ if (( interactive )); then
     if [[ "$answer" =~ ^[Yy] ]]; then INSTALL_BREW=1; INSTALL_BREW_PACKAGES=1; fi
     read -r -p "Install AI coding tools? [y/N]: " answer </dev/tty
     if [[ "$answer" =~ ^[Yy] ]]; then INSTALL_TOOLS=1; INSTALL_BREW=1; INSTALL_BREW_PACKAGES=1; fi
+    read -r -p "Configure optional Crush vibe-coding tools? [y/N]: " answer </dev/tty
+    if [[ "$answer" =~ ^[Yy] ]]; then
+        INSTALL_VIBECODE_CRUSH=1
+        INSTALL_BREW=1
+    fi
     read -r -p "Install Tailscale? [Y/n]: " answer </dev/tty
     [[ "$answer" =~ ^[Nn] ]] && INSTALL_TAILSCALE=0
     if [[ "$INSTALL_TAILSCALE" == "1" ]]; then
@@ -101,6 +107,10 @@ fi
 source "$ENV_FILE"
 VPS_SETUP_REF="${VPS_SETUP_REF:-main}"
 BASE="https://raw.githubusercontent.com/MahaKoala/VPSsetup/$VPS_SETUP_REF"
+if [[ "${INSTALL_VIBECODE_CRUSH:-0}" == "1" && "${INSTALL_BREW:-0}" != "1" && "${CRUSH_CONFIG_ONLY:-0}" != "1" ]]; then
+    echo "ERROR: Crush needs Homebrew. Set INSTALL_BREW=1 or CRUSH_CONFIG_ONLY=1." >&2
+    exit 1
+fi
 if [[ "${INSTALL_TOOLS:-0}" == "1" && "${INSTALL_BREW:-0}" != "1" ]]; then
     echo "ERROR: INSTALL_TOOLS=1 requires INSTALL_BREW=1." >&2
     exit 1
@@ -124,6 +134,13 @@ fi
 if [[ "${INSTALL_TOOLS:-0}" == "1" ]]; then
     echo "=== Stage 4: optional development tools ==="
     /usr/local/sbin/vps-tools.sh
+fi
+if [[ "${INSTALL_VIBECODE_CRUSH:-0}" == "1" ]]; then
+    echo "=== Optional stage: Crush vibe coding ==="
+    download "vps-vibecode-crush.sh" "/usr/local/sbin/vps-vibecode-crush.sh"
+    chmod 700 /usr/local/sbin/vps-vibecode-crush.sh
+    bash -n /usr/local/sbin/vps-vibecode-crush.sh
+    /usr/local/sbin/vps-vibecode-crush.sh
 fi
 if [[ "$RUN_VERIFY" == "1" || "$interactive" == "1" ]]; then
     echo "=== Stage 5: verification ==="
