@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Explicit opt-in: additional MCP subprocesses increase startup cost and access.
+mcp add memory --command npx --args "-y" --args "@modelcontextprotocol/server-memory"
+mcp add sequential-thinking --command npx --args "-y" --args "@modelcontextprotocol/server-sequential-thinking"
+mcp add fetch --command uvx --args "mcp-server-fetch"
+mcp add git --command uvx --args "mcp-server-git"

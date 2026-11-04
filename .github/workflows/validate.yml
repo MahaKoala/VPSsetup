@@ -18,6 +18,8 @@ jobs:
           python3 -m pip install --break-system-packages pyyaml
       - name: Check shared workers and cloud-init size/syntax
         run: python3 tests/check_provisioning.py
+      - name: Validate optional Crush and DeepSeek workers
+        run: python3 tests/check_vibecode_crush.py
       - name: Shellcheck (error-level diagnostics)
         run: shellcheck --severity=error ./*.sh
       - name: Validate cloud-init schema

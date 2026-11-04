@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Managed by VPSsetup. No API keys are stored in this file.
+# Set credentials in the invoking user's environment or secret manager.
+# Available providers depend on each account's subscription/permissions.
+
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  provider add anthropic --type anthropic --api-key "$ANTHROPIC_API_KEY"
+fi
+if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+  provider add openai --type openai --api-key "$OPENAI_API_KEY"
+fi
+if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+  provider add openrouter --type openai-compat --base-url "https://openrouter.ai/api/v1" --api-key "$OPENROUTER_API_KEY" --discover-models true
+fi
+
+# Moonshot pay-as-you-go API (Kimi K2 family and later).
+if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
+  provider add moonshot --type openai-compat --base-url "https://api.moonshot.ai/v1" --api-key "$MOONSHOT_API_KEY" --discover-models true
+  model add moonshot/kimi-k2.6 --name "Kimi K2.6"
+  model add moonshot/kimi-k2-0905-preview --name "Kimi K2 (legacy, availability varies)"
+fi
+
+# Kimi Code membership uses its OWN key and coding-only endpoint.
+if [[ -n "${KIMI_CODE_API_KEY:-}" ]]; then
+  provider add kimi-code --type openai-compat --base-url "https://api.kimi.ai/coding/v1" --api-key "$KIMI_CODE_API_KEY" --discover-models true
+fi
+
+# Z.ai GLM normal prepaid and coding-plan endpoints are not interchangeable.
+if [[ -n "${ZAI_API_KEY:-}" ]]; then
+  provider add zai --type openai-compat --base-url "https://api.z.ai/api/paas/v4" --api-key "$ZAI_API_KEY" --discover-models true
+  model add zai/glm-5.3 --name "GLM 5.3"
+fi
+if [[ -n "${ZAI_CODING_API_KEY:-}" ]]; then
+  provider add zai-coding --type openai-compat --base-url "https://api.z.ai/api/coding/paas/v4" --api-key "$ZAI_CODING_API_KEY" --discover-models true
+fi
+
+# China-region Zhipu BigModel / open.bigmodel.cn.
+if [[ -n "${ZHIPU_API_KEY:-}" ]]; then
+  provider add zhipu --type openai-compat --base-url "https://open.bigmodel.cn/api/paas/v4" --api-key "$ZHIPU_API_KEY" --discover-models true
+  model add zhipu/glm-5.3 --name "GLM 5.3 (BigModel)"
+fi
+if [[ -n "${ZHIPU_CODING_API_KEY:-}" ]]; then
+  provider add zhipu-coding --type openai-compat --base-url "https://open.bigmodel.cn/api/coding/paas/v4" --api-key "$ZHIPU_CODING_API_KEY" --discover-models true
+fi
+
+if [[ -n "${XAI_API_KEY:-}" ]]; then
+  provider add xai --type openai-compat --base-url "https://api.x.ai/v1" --api-key "$XAI_API_KEY" --discover-models true
+  model add xai/grok-4.7 --name "Grok 4.7"
+fi
+if [[ -n "${DEEPSEEK_API_KEY:-}" ]]; then
+  provider add deepseek --type openai-compat --base-url "https://api.deepseek.com" --api-key "$DEEPSEEK_API_KEY" --discover-models true
+  model add deepseek/deepseek-v4-pro --name "DeepSeek V4 Pro"
+  model add deepseek/deepseek-flash --name "DeepSeek Flash"
+fi
+# "DeepSeek Super-Agent" is a distinct research prototype, NOT an API model.

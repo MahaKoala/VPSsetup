@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Non-destructive defaults; editing and shell still prompt for approval.
+permissions allow view ls glob grep
+option context-path AGENTS.md
+option context-path CRUSH.md
+option context-path CLAUDE.md
+# Project guidance must be reviewed; avoid automatically reading secret files.
+mcp add context7 --command npx --args "-y" --args "@upstash/context7-mcp"
