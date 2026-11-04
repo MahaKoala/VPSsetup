@@ -1,0 +1,24 @@
+name: Validate VPSsetup
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install static validation dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck cloud-init
+          python3 -m pip install --break-system-packages pyyaml
+      - name: Check shared workers and cloud-init size/syntax
+        run: python3 tests/check_provisioning.py
+      - name: Shellcheck (error-level diagnostics)
+        run: shellcheck --severity=error ./*.sh
+      - name: Validate cloud-init schema
+        run: cloud-init schema -c cloud-init.yaml --annotate

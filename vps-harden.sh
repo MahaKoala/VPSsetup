@@ -27,6 +27,7 @@ source "$ENV_FILE"
 : "${DISABLE_IPV6_SSH:=0}"
 : "${ENABLE_UFW:=1}"
 : "${PUBLIC_SSH_ALLOWED:=1}"
+: "${TAILNET_SSH_VERIFIED:=0}"  # operator must confirm a NEW SSH session before closing public access
 : "${ALLOW_HTTP_HTTPS:=0}"
 : "${EXTRA_UFW_PORTS:=}"
 : "${ENABLE_FAIL2BAN:=1}"
@@ -117,7 +118,15 @@ apt-get install -y openssh-server ufw fail2ban unattended-upgrades \
 if bool "$HARDEN_SSH"; then
     echo "--- SSH hardening ---"
     mkdir -p /etc/ssh/sshd_config.d
-    DROPIN=/etc/ssh/sshd_config.d/99-vps-hardening.conf
+    # OpenSSH takes the first value across included files. Prefix 01 beats
+    # cloud-init's common 50-cloud-init.conf; 99 may not override it.
+    DROPIN=/etc/ssh/sshd_config.d/01-vps-hardening.conf
+    LEGACY=/etc/ssh/sshd_config.d/99-vps-hardening.conf
+    legacy_moved=0
+    if [[ -f "$LEGACY" ]]; then
+        mv "$LEGACY" "$LEGACY.migrated"
+        legacy_moved=1
+    fi
 
     # Snapshot existing drop-in so we can roll back if validation fails — a
     # broken drop-in left in place would prevent sshd from starting on next boot.
@@ -139,7 +148,6 @@ if bool "$HARDEN_SSH"; then
       echo "ClientAliveCountMax 3"
       echo "MaxAuthTries 4"
       echo "LoginGraceTime 20"
-      echo "Protocol 2"
       bool "$DISABLE_IPV6_SSH" && echo "AddressFamily inet"
       if bool "$LIMIT_SSH_TO_ADMIN_USER"; then
           extra=""
@@ -172,6 +180,17 @@ if bool "$HARDEN_SSH"; then
         else
             rm -f "$DROPIN"
         fi
+        (( legacy_moved )) && mv "$LEGACY.migrated" "$LEGACY"
+        exit 1
+    fi
+    EFFECTIVE="$(sshd -T)"
+    # Syntax checks alone do not catch overridden values in other drop-ins.
+    if ! grep -qx "passwordauthentication $ALLOW_PASSWORD_AUTH" <<< "$EFFECTIVE" ||
+       ! grep -qx "pubkeyauthentication yes" <<< "$EFFECTIVE" ||
+       ! grep -qx "permitrootlogin $PERMIT_ROOT_LOGIN" <<< "$EFFECTIVE"; then
+        echo "ERROR: SSH effective configuration differs from requested values"
+        [[ -f "${DROPIN}.bak" ]] && mv "${DROPIN}.bak" "$DROPIN" || rm -f "$DROPIN"
+        (( legacy_moved )) && mv "$LEGACY.migrated" "$LEGACY"
         exit 1
     fi
     rm -f "${DROPIN}.bak"
@@ -269,7 +288,11 @@ if bool "$ENABLE_UFW"; then
     # Tailscale is verifiably up. The interface-wide tailscale0 allow added
     # below depends on the interface existing — without it we'd brick SSH.
     if ! bool "$PUBLIC_SSH_ALLOWED"; then
-        if ! command -v tailscale >/dev/null || ! tailscale status >/dev/null 2>&1; then
+        if ! bool "$TAILNET_SSH_VERIFIED"; then
+            echo "ERROR: Set TAILNET_SSH_VERIFIED=1 only after opening a second SSH session over Tailscale." >&2
+            exit 1
+        fi
+        if ! command -v tailscale >/dev/null || [[ -z "$(tailscale ip -4 2>/dev/null)" ]]; then
             echo "ERROR: PUBLIC_SSH_ALLOWED=0 but Tailscale is not connected."
             echo "       Refusing to enable UFW (you would be locked out)."
             echo "       Run with PUBLIC_SSH_ALLOWED=1 first, verify the tailnet,"
@@ -278,12 +301,15 @@ if bool "$ENABLE_UFW"; then
         fi
     fi
 
-    ufw --force reset >/dev/null
+    # NEVER reset UFW: it would delete rules for unrelated applications.
     ufw default deny incoming
     ufw default allow outgoing
 
     if bool "$PUBLIC_SSH_ALLOWED"; then
         ufw allow "${SSH_PORT}/tcp" comment 'public ssh'
+    else
+        # Only remove the public SSH allow rule after verified tailnet access.
+        ufw --force delete allow "${SSH_PORT}/tcp" >/dev/null 2>&1 || true
     fi
 
     # Tailscale direct UDP (helps NAT traversal even if not strictly required)
@@ -458,38 +484,22 @@ if bool "$INSTALL_TAILSCALE"; then
                 echo "    sudo /usr/local/sbin/vps-harden.sh"
             fi
         else
-            printf '[STATUS] warn|tailscale up|no TAILSCALE_AUTHKEY; tailscaled installed but not joined\n'
-            echo
-            echo "tailscaled is installed but not joined to a tailnet."
-            echo "To join, generate an auth key at:"
-            echo "    https://login.tailscale.com/admin/settings/keys"
-            echo "Then run ONE of:"
-            echo "    sudo tailscale up --auth-key=<key>"
-            echo "    sudo sed -i 's|^TAILSCALE_AUTHKEY=.*|TAILSCALE_AUTHKEY=\"<key>\"|' /etc/vps/bootstrap.env"
-            echo "    sudo /usr/local/sbin/vps-harden.sh"
+            if [[ -n "$(tailscale ip -4 2>/dev/null)" ]]; then
+                printf '[STATUS] ok|tailscale up|already joined; preserving existing session\n'
+                echo "Tailscale already joined; no auth key required for this run."
+            else
+                printf '[STATUS] warn|tailscale up|installed but not joined (no auth key)\n'
+                echo "Tailscale installed but not joined. Authenticate later using sudo tailscale up."
+            fi
         fi
     else
         echo "WARN: tailscale binary missing after install attempt; skipping tailscale up"
     fi
 fi
 
-# ---------- 8. Lock down public SSH after Tailscale is up (optional 2nd run) ----------
+# ---------- 8. Tailnet access notice ----------
 if bool "$ENABLE_UFW" && ! bool "$PUBLIC_SSH_ALLOWED"; then
-    if command -v tailscale &>/dev/null && tailscale status &>/dev/null; then
-        echo "Tailscale connected -> restricting SSH to tailscale0"
-        ufw allow in on tailscale0 to any port "$SSH_PORT" proto tcp comment 'ssh via tailscale'
-
-        # Verify the tailnet SSH path is actually visible in UFW before
-        # tearing the public rule down.
-        if ufw status | grep -qE "tailscale0.*ALLOW"; then
-            ufw delete allow "${SSH_PORT}/tcp" || true
-            echo "OK: tailnet SSH rule verified; public ${SSH_PORT}/tcp removed"
-        else
-            echo "WARN: tailnet SSH rule not visible in 'ufw status'; leaving public rule in place"
-        fi
-    else
-        echo "WARN: Tailscale not connected; leaving public SSH rule untouched"
-    fi
+    echo "Public SSH rule removed; tailnet-only SSH requires verified client access."
 fi
 
 # ---------- 9. SSH access summary ----------

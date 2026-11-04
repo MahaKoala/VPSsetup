@@ -42,6 +42,10 @@ if [[ -r /etc/vps/bootstrap.env ]]; then
 fi
 VPS_USER="${VPS_USER:-}"
 SSH_PORT="${SSH_PORT:-22}"
+FIRST_LOGIN_PASSWORD_PROMPT="${FIRST_LOGIN_PASSWORD_PROMPT:-0}"
+SWAP_MODE="${SWAP_MODE:-auto}"
+INSTALL_BREW="${INSTALL_BREW:-0}"
+INSTALL_TOOLS="${INSTALL_TOOLS:-0}"
 
 EUID_NOW="${EUID:-$(id -u)}"
 if (( EUID_NOW != 0 )); then
@@ -92,6 +96,34 @@ if [[ -r /etc/os-release ]]; then
 fi
 note "kernel: $(uname -r)"
 note "uptime: $(uptime -p 2>/dev/null || uptime)"
+
+section "Swap (provider-neutral)"
+if [[ "$SWAP_MODE" == "off" ]]; then
+    ok "swap disabled by configuration"
+elif swapon --noheadings --show=NAME 2>/dev/null | grep -q '[^[:space:]]'; then
+    ok "active swap: $(swapon --noheadings --show=SIZE 2>/dev/null | tr '\n' ' ')"
+else
+    warn "SWAP_MODE=auto but no swap is currently active (may have been skipped due to disk size)"
+fi
+
+section "Admin password policy"
+if [[ -n "$VPS_USER" ]] && id "$VPS_USER" >/dev/null 2>&1; then
+    state="$(passwd -S "$VPS_USER" 2>/dev/null | awk '{print $2}')" 
+    if [[ "$FIRST_LOGIN_PASSWORD_PROMPT" == "0" ]]; then
+        case "$state" in
+            L) ok "$VPS_USER has a locked password (SSH-key-only)" ;;
+            *) warn "$VPS_USER password status is $state; SSH password login should still be disabled" ;;
+        esac
+        home="$(getent passwd "$VPS_USER" | cut -d: -f6)"
+        [[ ! -e "$home/.firstlogin-passwd.sh" ]] &&
+            ok "first-login password hook disabled" ||
+            warn "first-login password hook still exists; re-run vps-bootstrap.sh"
+    else
+        note "first-login password hook explicitly enabled"
+    fi
+else
+    warn "configured admin user missing"
+fi
 
 section "Disk space"
 # Warn under 2GB free on / or /home, fail under 500MB.
@@ -179,6 +211,11 @@ check_keys_for() {
     if [[ -s "$f" ]]; then
         n=$(grep -cvE '^\s*(#|$)' "$f" 2>/dev/null || wc -l < "$f")
         ok "$u: $n key(s) in $f"
+        if ssh-keygen -lf "$f" >/dev/null 2>&1; then
+            ok "$u: authorized_keys contains valid OpenSSH key material"
+        else
+            fail "$u: authorized_keys does not contain parseable public keys"
+        fi
     else
         if [[ "$u" == "root" || "$u" == "$VPS_USER" ]]; then
             warn "$u: $f is empty or missing"
@@ -278,8 +315,10 @@ fi
 # Homebrew & user PATH spot-check
 # ============================================================
 section "Homebrew (per-user)"
-if [[ ! -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
-    warn "brew not installed at /home/linuxbrew/.linuxbrew"
+if [[ "$INSTALL_BREW" != "1" ]]; then
+    ok "brew intentionally disabled; skipped CLI tool checks"
+elif [[ ! -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
+    fail "brew requested but not installed at /home/linuxbrew/.linuxbrew"
 elif [[ -z "$VPS_USER" ]] || ! id -u "$VPS_USER" &>/dev/null; then
     warn "VPS_USER unset or missing — skipping per-user brew check"
 else

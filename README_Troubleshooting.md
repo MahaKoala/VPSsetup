@@ -716,3 +716,48 @@ sudo bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main
 ```
 
 If verify passes, you're done. If verify fails, the failed lines point at the section in this doc. Don't make the mistake (we've all done it) of "fixing it manually" — usually re-running the relevant script picks up where it left off.
+
+
+---
+
+## 9. Portable/cloud-init parity (new installer)
+
+### Cloud-init `scripts_user` / `runcmd` error
+
+The file was parsed and execution failed. Check `sudo tail -n 100 /var/log/hetzner-firstboot.log` and `/var/log/vps-bootstrap.log`. Do **not** `cloud-init clean` on a working instance merely to erase the historical error. Cloud-init runs the same `vps-init.sh` used by non-cloud-init providers.
+
+### `curl: (22) ... 404` after swap setup
+
+The old script could construct a download URL using `BASE=https://raw.githubusercontent.com/.../cloud-init.yaml` and then append `/vps-bootstrap.sh`. `BASE` must be a **repository directory**. The revised installer uses `VPS_SETUP_REF` and downloads worker filenames directly. To test:
+
+```bash
+curl -fLsS -o /dev/null -w '%{http_code}\n' \
+  https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-bootstrap.sh
+```
+
+### SSHID RSA/ECDSA-SK endpoint returned unexpected data
+
+Typed SSHID responses sometimes differ from a single strict `ssh-rsa ...` line. The worker now validates **each** returned OpenSSH key, ignores malformed/HTML entries, and preserves the base `sshid.io/<id>` keys. Validate fingerprints in `/home/$VPS_USER/.ssh/authorized_keys` with `ssh-keygen -lf` and compare to your laptop's public keys. A successful download does not prove the client has the matching private key.
+
+### SSH client requests a password for the new account
+
+No default Linux password exists. `FIRST_LOGIN_PASSWORD_PROMPT=0` disables the old first-login prompt, and the hardener disables SSH password authentication. Your client is probably not offering the correct key; diagnose with `ssh -vvv -o PasswordAuthentication=no USER@HOST`. Keep the provider console available.
+
+### Re-run creates password prompt
+
+Re-run the **new** standalone `vps-bootstrap.sh` after setting `FIRST_LOGIN_PASSWORD_PROMPT=0` in `/etc/vps/bootstrap.env`; it removes its own old password hook. The main installer no longer contains an embedded bootstrap copy.
+
+### Public SSH cannot be disabled with `PUBLIC_SSH_ALLOWED=0`
+
+First successfully open a **new** SSH session via Tailscale. Then set `TAILNET_SSH_VERIFIED=1` in the env file and rerun `vps-harden.sh`. A joined tailnet is not proof of SSH authorization. See [Hetzner guide](docs/HETZNER.md).
+
+### Script installed but a single worker needs rerunning
+
+```bash
+sudo /usr/local/sbin/vps-swap.sh
+sudo /usr/local/sbin/vps-bootstrap.sh
+sudo /usr/local/sbin/vps-harden.sh
+sudo /usr/local/sbin/VerifyChecklist.sh
+```
+
+Each independently reads `/etc/vps/bootstrap.env` and does not depend on cloud-init.
