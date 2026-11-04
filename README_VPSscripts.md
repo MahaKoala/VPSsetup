@@ -16,7 +16,8 @@ Both cloud-init and one-line installation download the **same standalone worker 
 sudo /usr/local/sbin/vps-swap.sh
 sudo /usr/local/sbin/vps-bootstrap.sh
 sudo /usr/local/sbin/vps-harden.sh
-sudo /usr/local/sbin/vps-tools.sh
+sudo /usr/local/sbin/vps-tools.sh             # full legacy AI suite; optional
+sudo /usr/local/sbin/vps-vibecode-crush.sh   # standalone Crush setup; optional
 sudo /usr/local/sbin/VerifyChecklist.sh
 ```
 
@@ -25,7 +26,8 @@ sudo /usr/local/sbin/VerifyChecklist.sh
 | `vps-swap.sh` | 50% of detected RAM by default; bounded, disk-space-aware, preserves existing swap |
 | `vps-bootstrap.sh` | Installs base packages, creates configurable user, fetches and validates keys, optional Homebrew |
 | `vps-harden.sh` | Enforces effective OpenSSH configuration, manages project UFW rules without resetting unrelated ones, Fail2Ban, updates, sysctl, Tailscale |
-| `vps-tools.sh` | Optional Homebrew-dependent AI/dev tools and per-user statusline; use `INSTALL_TOOLS=1` |
+| `vps-tools.sh` | Optional complete AI/dev suite; use `INSTALL_TOOLS=1` |
+| `vps-vibecode-crush.sh` | Optional Crush provider profiles, MCP/LSP setup, and slash commands; `INSTALL_VIBECODE_CRUSH=1` |
 | `VerifyChecklist.sh` | Validates keys, SSH, password policy, swap, UFW, services, Tailscale and optional tooling |
 
 Each worker reads the saved `/etc/vps/bootstrap.env`, and **none requires cloud-init**. For use on a completely fresh provider, generate/edit this config and download the necessary worker, or use the one-liner to do it.
@@ -38,7 +40,8 @@ All defaults are defined in [`bootstrap.env`](bootstrap.env). Particularly impor
 - `SSH_ID` + `SSH_ID_TYPED_KEYS="RSA ECDSA-SK"` select validated public-key sources; `SSH_GH_USER` and `SSH_AUTHORIZED_KEYS` are alternatives.
 - `FIRST_LOGIN_PASSWORD_PROMPT=0` means a **new** admin has no preset password and no first-login prompt. Password auth over SSH is disabled separately.
 - `SWAP_MODE=auto`, `SWAP_PERCENT=50`, `SWAP_MIN_MB=512`, `SWAP_MAX_MB=4096` and disk reserve control swap on any RAM size.
-- `INSTALL_BREW=0`, `INSTALL_TOOLS=0`: large tool installations are opt-in.
+- `INSTALL_BREW=0`, `INSTALL_TOOLS=0`, `INSTALL_VIBECODE_CRUSH=0`: optional AI tool installations are opt-in.
+- `CRUSH_MCP_PROFILE=core` and `CRUSH_LSP_PROFILE=web,python`: configure lightweight Crush MCP/LSP profiles only when the Crush worker is explicitly called.
 - `PUBLIC_SSH_ALLOWED=1` preserves public SSH during initial setup. To close it after verifying a **new** SSH session over Tailscale, also set `TAILNET_SSH_VERIFIED=1`.
 - `VPS_SETUP_REF` selects the revision to download; prefer a known release/tag/SHA for production.
 - `TAILSCALE_AUTHKEY` may be blank; joining the tailnet and authorizing Tailscale SSH are separate operations.
@@ -55,6 +58,7 @@ All defaults are defined in [`bootstrap.env`](bootstrap.env). Particularly impor
 ## Related guides
 
 - [One-line installer](README_SingleFileVPSinit.md)
+- [Modular Crush providers and profiles](README_VibecodeCrush.md)
 - [Hetzner setup and recovery](docs/HETZNER.md)
 - [SSHID helper scripts](README_SSHIDscript.md)
 - [Password policy](README_FirstLoginPassword.md)
