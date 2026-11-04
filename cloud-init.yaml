@@ -150,7 +150,8 @@ write_files:
 
       configure_swap
 
-      # Download pinned, known-revision provisioning workers.
+      # Download provisioning workers from a pinned repository revision.
+      # BASE must be a directory, never a path ending in cloud-init.yaml.
       BASE="https://raw.githubusercontent.com/MahaKoala/VPSsetup/5132d54cab926f3b9898634c61ebc9bd6fa69a22"
       for script in vps-bootstrap.sh vps-harden.sh; do
         curl -fLsS --retry 3 --max-time 120 \
@@ -182,38 +183,70 @@ write_files:
       install -d -m 700 -o root -g root /root/.ssh
       touch "$USER_AUTH" "$ROOT_AUTH"
 
-      # Fetch both explicitly requested SSHID key types before hardening.
-      if [[ -z "$SSH_ID" ]]; then
-        echo "ERROR: SSH_ID must be configured." >&2
-        exit 1
-      fi
+      # Try both explicit SSHID endpoints. Some responses contain
+      # multiple lines or unexpected content; only install valid keys.
+      fetch_typed_sshid_keys() {
+        local kind="$1" expected_type="$2"
+        local url response line key_type key_blob key_comment key tmp
+        local found=0
 
-      fetch_sshid_key() {
-        local kind="$1" expected_type="$2" key
-        echo "Fetching https://sshid.io/$SSH_ID/$kind" >&2
-        key="$(curl -fLsS --retry 3 --max-time 30 \
-          "https://sshid.io/$SSH_ID/$kind")"
+        url="https://sshid.io/$SSH_ID/$kind"
+        echo "Fetching SSH public keys from $url"
 
-        if [[ -z "$key" || "$key" == *$'\n'* ||
-              "$key" != "$expected_type "* ]]; then
-          echo "ERROR: Invalid $kind SSH public key response." >&2
-          return 1
+        if ! response="$(curl -fsSL --retry 3 --max-time 30 "$url")"; then
+          echo "WARN: $kind endpoint unavailable; retaining bootstrap keys."
+          return 0
         fi
 
-        if ! printf '%s\n' "$key" | ssh-keygen -lf - >/dev/null 2>&1; then
-          echo "ERROR: $kind key failed ssh-keygen validation." >&2
-          return 1
+        while IFS= read -r line || [[ -n "$line" ]]; do
+          line="$(printf '%s' "$line" | tr -d '\r')"
+          read -r key_type key_blob key_comment <<< "$line"
+          [[ "$key_type" == "$expected_type" && -n "$key_blob" ]] || continue
+
+          key="$key_type $key_blob"
+          [[ -n "$key_comment" ]] && key+=" $key_comment"
+
+          tmp="$(mktemp)"
+          printf '%s\n' "$key" > "$tmp"
+          if ssh-keygen -lf "$tmp" >/dev/null 2>&1; then
+            for auth_file in "$USER_AUTH" "$ROOT_AUTH"; do
+              grep -qxF "$key" "$auth_file" ||
+                printf '%s\n' "$key" >> "$auth_file"
+            done
+            found=$((found + 1))
+          else
+            echo "WARN: Discarded malformed $kind public key."
+          fi
+          rm -f "$tmp"
+        done <<< "$response"
+
+        echo "$kind: $found validated key(s) fetched."
+        if (( found == 0 )); then
+          echo "WARN: No valid $expected_type keys at typed endpoint."
+          echo "      Keeping valid keys from the SSHID base endpoint."
         fi
-        printf '%s' "$key"
       }
 
-      RSA_KEY="$(fetch_sshid_key RSA ssh-rsa)"
-      ECDSA_SK_KEY="$(fetch_sshid_key ECDSA-SK sk-ecdsa-sha2-nistp256@openssh.com)"
+      if [[ -n "$SSH_ID" ]]; then
+        fetch_typed_sshid_keys RSA ssh-rsa
+        fetch_typed_sshid_keys ECDSA-SK sk-ecdsa-sha2-nistp256@openssh.com
+      fi
 
+      # Verify usable keys before disabling SSH password authentication.
       for auth_file in "$USER_AUTH" "$ROOT_AUTH"; do
-        for key in "$RSA_KEY" "$ECDSA_SK_KEY"; do
-          grep -qxF "$key" "$auth_file" || printf '%s\n' "$key" >> "$auth_file"
-        done
+        if [[ ! -s "$auth_file" ]] ||
+           ! ssh-keygen -lf "$auth_file" >/dev/null 2>&1; then
+          echo "ERROR: No valid SSH public key in $auth_file" >&2
+          exit 1
+        fi
+      done
+
+      # Report missing key types, but retain valid working SSH access.
+      for expected_type in ssh-rsa sk-ecdsa-sha2-nistp256@openssh.com; do
+        if ! awk -v type="$expected_type" \
+          '$1 == type {found=1} END {exit !found}' "$USER_AUTH"; then
+          echo "WARN: No $expected_type key installed for $VPS_USER."
+        fi
       done
 
       chown "$VPS_USER:$VPS_USER" "$USER_HOME/.ssh" "$USER_AUTH"
@@ -223,7 +256,7 @@ write_files:
       chmod 700 /root/.ssh
       chmod 600 "$ROOT_AUTH"
 
-      echo "RSA and ECDSA-SK SSH keys installed for $VPS_USER and root."
+      echo "Validated SSH access keys for $VPS_USER and root."
 
       # Harden only after SSH public keys have been installed.
       /usr/local/sbin/vps-harden.sh
