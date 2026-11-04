@@ -66,7 +66,7 @@ if (( interactive )); then
     read -r -p "GitHub SSH-key username [$SSH_GH_USER]: " answer </dev/tty
     SSH_GH_USER="${answer:-$SSH_GH_USER}"
     read -r -p "Install Homebrew? [y/N]: " answer </dev/tty
-    [[ "$answer" =~ ^[Yy] ]] && INSTALL_BREW=1
+    if [[ "$answer" =~ ^[Yy] ]]; then INSTALL_BREW=1; INSTALL_BREW_PACKAGES=1; fi
     read -r -p "Install AI coding tools? [y/N]: " answer </dev/tty
     if [[ "$answer" =~ ^[Yy] ]]; then INSTALL_TOOLS=1; INSTALL_BREW=1; INSTALL_BREW_PACKAGES=1; fi
     read -r -p "Install Tailscale? [Y/n]: " answer </dev/tty
