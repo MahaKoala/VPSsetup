@@ -118,7 +118,15 @@ apt-get install -y openssh-server ufw fail2ban unattended-upgrades \
 if bool "$HARDEN_SSH"; then
     echo "--- SSH hardening ---"
     mkdir -p /etc/ssh/sshd_config.d
-    DROPIN=/etc/ssh/sshd_config.d/99-vps-hardening.conf
+    # OpenSSH takes the first value across included files. Prefix 01 beats
+    # cloud-init's common 50-cloud-init.conf; 99 may not override it.
+    DROPIN=/etc/ssh/sshd_config.d/01-vps-hardening.conf
+    LEGACY=/etc/ssh/sshd_config.d/99-vps-hardening.conf
+    legacy_moved=0
+    if [[ -f "$LEGACY" ]]; then
+        mv "$LEGACY" "$LEGACY.migrated"
+        legacy_moved=1
+    fi
 
     # Snapshot existing drop-in so we can roll back if validation fails — a
     # broken drop-in left in place would prevent sshd from starting on next boot.
@@ -172,6 +180,17 @@ if bool "$HARDEN_SSH"; then
         else
             rm -f "$DROPIN"
         fi
+        (( legacy_moved )) && mv "$LEGACY.migrated" "$LEGACY"
+        exit 1
+    fi
+    EFFECTIVE="$(sshd -T)"
+    # Syntax checks alone do not catch overridden values in other drop-ins.
+    if ! grep -qx "passwordauthentication $ALLOW_PASSWORD_AUTH" <<< "$EFFECTIVE" ||
+       ! grep -qx "pubkeyauthentication yes" <<< "$EFFECTIVE" ||
+       ! grep -qx "permitrootlogin $PERMIT_ROOT_LOGIN" <<< "$EFFECTIVE"; then
+        echo "ERROR: SSH effective configuration differs from requested values"
+        [[ -f "${DROPIN}.bak" ]] && mv "${DROPIN}.bak" "$DROPIN" || rm -f "$DROPIN"
+        (( legacy_moved )) && mv "$LEGACY.migrated" "$LEGACY"
         exit 1
     fi
     rm -f "${DROPIN}.bak"
