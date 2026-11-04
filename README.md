@@ -144,32 +144,17 @@ Cloud-init writes a root-only `bootstrap.env` and calls **the same** `vps-init.s
 
 See [Hetzner-specific setup and recovery instructions](docs/HETZNER.md).
 
-### End-of-install report (Path A only)
+### Logs and verification for all installation methods
 
-After bootstrap → harden → tools, `vps-init.sh` parses `[STATUS]` lines from `/var/log/vps-bootstrap.log` and prints a tally:
+Workers log to `/var/log/vps-bootstrap.log`. The Hetzner cloud-init wrapper also writes `/var/log/hetzner-firstboot.log`. The small portable installer prints stage markers and runs `VerifyChecklist.sh` interactively or when `RUN_VERIFY=1`; it does **not** embed or reproduce the worker scripts.
 
-```
-── Install report ──
-  ✓ ok:   24
-  ! warn: 2
-  ✗ fail: 1
-
-Warnings:
-  ! brew bun                         (install failed)
-  ! tmuxai                           (installer failed)
-
-Failures:
-  ✗ tailscale up                     (exit 1)
-
-How to retry individual items:
-  brew package          → sudo -u maha bash -lc 'brew install <pkg>'
-  npm package           → sudo -u maha bash -lc 'npm i -g <pkg>'
-  claude-code           → sudo -u maha bash -lc 'curl -fsSL https://claude.ai/install.sh | bash'
-  tailscale             → sudo tailscale up --auth-key=<new-key>
-  full log              → less /var/log/vps-bootstrap.log
+```bash
+sudo /usr/local/sbin/VerifyChecklist.sh
+sudo /usr/local/sbin/VerifyChecklist.sh --report
+sudo tail -n 100 /var/log/vps-bootstrap.log
 ```
 
-Each install step (per-package brew, per-tap, npm, curl-installers, tailscale up, etc.) emits one structured `[STATUS] <ok|warn|fail>|<step>|<detail>` line into the shared log. Path B and Path C don't print the report at the end (only `vps-init.sh` orchestrates) — but the structured log lines are still emitted, so you can run `VerifyChecklist.sh --report` later to read the same tally.
+`VerifyChecklist.sh` reports separately on swap, SSH-key validity, password policy, SSH, UFW, Fail2Ban, Tailscale and optional developer tools. Read warnings carefully; a successful script exit is not proof that a client can actually connect through its private key.
 
 ---
 
