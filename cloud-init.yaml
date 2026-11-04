@@ -1,55 +1,89 @@
-#Paste this into Hetzner's **Cloud config / user-data** field. Replace placeholders.
-#For **DigitalOcean**, the same YAML works; for **Vultr**, paste it into "User Data"; for **Linode**, into "StackScript" or user-data. Provider differences are minor — the hostname auto-detector here only queries Hetzner's metadata endpoint; on others it falls back to `/etc/machine-id`.
 #cloud-config
+# Hetzner and other cloud-init providers: paste this entire file into user-data.
+# Change VPS_USER, VPS_HOSTNAME, SSH_ID, and optionally VPS_SETUP_REF.
+# The downloaded installer/workers are ALSO usable without cloud-init.
 package_update: true
-package_upgrade: true
+packages:
+  - curl
+  - ca-certificates
 
 write_files:
   - path: /etc/vps/bootstrap.env
-    permissions: "0644"
+    owner: root:root
+    permissions: '0600'
     content: |
-      VPS_USER="pink"
-      VPS_HOSTNAME=""
+      # Instance identity
+      VPS_USER="maha"
+      VPS_USER_SHELL="/bin/bash"
+      VPS_HOSTNAME="hel4.deployed.digital"
       VPS_HOSTNAME_PREFIX="deployeddigital"
       VPS_ROLE="dev"
+      # Reference can be 'main', a tag, or a pinned commit SHA.
+      VPS_SETUP_REF="main"
 
+      # SSH key sources (at least one required for a fresh VPS)
       SSH_ID="mahakoala"
+      SSH_ID_TYPED_KEYS="RSA ECDSA-SK"
       SSH_GH_USER=""
       SSH_AUTHORIZED_KEYS=""
-
+      FIRST_LOGIN_PASSWORD_PROMPT="0"
       ENABLE_PASSWORDLESS_SUDO="1"
 
-      INSTALL_BREW="1"
-      INSTALL_BREW_PACKAGES="1"
-      BREW_PACKAGES="starship eza tldr zoxide btop fd ripgrep bat git-delta lazygit glow ranger jq yq fzf gh node oven-sh/bun/bun pnpm yarn go"
+      # Small VPS defaults: opt in to heavy development packages.
+      INSTALL_BREW="0"
+      INSTALL_BREW_PACKAGES="0"
+      BREW_PACKAGES=""
       INSTALL_NODE_LTS="0"
       INSTALL_DOCKER="0"
+      INSTALL_TOOLS="0"
 
+      # Portable RAM-aware swap (50%, with bounds and disk reserve)
+      SWAP_MODE="auto"
+      SWAP_PERCENT="50"
+      SWAP_MIN_MB="512"
+      SWAP_MAX_MB="4096"
+      SWAP_DISK_RESERVE_MB="1024"
+      SWAP_FILE="/swapfile"
+
+      # SSH, firewall, and hardening
       SSH_PORT="22"
+      HARDEN_SSH="1"
       ALLOW_PASSWORD_AUTH="no"
       PERMIT_ROOT_LOGIN="prohibit-password"
       LIMIT_SSH_TO_ADMIN_USER="1"
       ENABLE_UFW="1"
       PUBLIC_SSH_ALLOWED="1"
+      TAILNET_SSH_VERIFIED="0"
       ALLOW_HTTP_HTTPS="0"
       ENABLE_FAIL2BAN="1"
       ENABLE_UNATTENDED="1"
+      ENABLE_SYSCTL_HARDENING="1"
 
+      # Tailscale: install first; authenticate interactively or with
+      # an ephemeral auth key supplied securely after provisioning.
       INSTALL_TAILSCALE="1"
-      TAILSCALE_AUTHKEY="tskey-auth-REPLACE_ME"
-      # Leave TAILSCALE_TAGS empty to use the tags the auth key was generated
-      # with. Only set it when EVERY tag is declared in tailscale.json's
-      # tagOwners AND the auth key was generated allowing those tags.
+      TAILSCALE_AUTHKEY=""
       TAILSCALE_TAGS=""
       TAILSCALE_SSH="1"
+      TAILSCALE_ACCEPT_DNS="false"
       TAILSCALE_EXTRA_ARGS="--accept-routes"
 
+  - path: /usr/local/sbin/hetzner-firstboot.sh
+    owner: root:root
+    permissions: '0700'
+    content: |
+      #!/usr/bin/env bash
+      set -Eeuo pipefail
+      exec > >(tee -a /var/log/hetzner-firstboot.log) 2>&1
+      source /etc/vps/bootstrap.env
+      VPS_SETUP_REF="${VPS_SETUP_REF:-main}"
+      BASE="https://raw.githubusercontent.com/MahaKoala/VPSsetup/$VPS_SETUP_REF"
+      echo "Installing VPSsetup from $BASE (repository directory)"
+      curl -fLsS --retry 3 --max-time 120 \
+        "$BASE/vps-init.sh" -o /usr/local/sbin/vps-init.sh
+      chmod 700 /usr/local/sbin/vps-init.sh
+      bash -n /usr/local/sbin/vps-init.sh
+      VPS_SETUP_REF="$VPS_SETUP_REF" NONINTERACTIVE=1 RUN_VERIFY=1 /usr/local/sbin/vps-init.sh
+
 runcmd:
-  - mkdir -p /usr/local/sbin
-  - curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-bootstrap.sh -o /usr/local/sbin/vps-bootstrap.sh
-  - curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-harden.sh    -o /usr/local/sbin/vps-harden.sh
-  - curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-tools.sh    -o /usr/local/sbin/vps-tools.sh
-  - chmod +x /usr/local/sbin/vps-bootstrap.sh /usr/local/sbin/vps-harden.sh /usr/local/sbin/vps-tools.sh
-  - /usr/local/sbin/vps-bootstrap.sh
-  - /usr/local/sbin/vps-harden.sh
-  - /usr/local/sbin/vps-tools.sh
+  - [bash, /usr/local/sbin/hetzner-firstboot.sh]

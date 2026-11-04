@@ -1,27 +1,29 @@
-// Tailscale ACL policy for the deployeddigital tailnet.
-//
-// IMPORTANT: every tag you reference in `tailscale up --advertise-tags=…` (or
-// in an auth key's tag set) MUST appear in `tagOwners` below. A tag missing
-// from tagOwners → Tailscale rejects the auth-key request with
-// "requested tags … are invalid or not permitted".
-//
-// SSH access: `users` lists which Linux usernames the SSH ACL accepts. Add
-// every VPS_USER you intend to deploy with (root is included for emergency
-// recovery via the mirrored authorized_keys).
+// Example policy only. Publishing this file to GitHub does NOT apply it to the tailnet.
+// Attach tag:vps to the server when joining (e.g., use a tagged auth key).
+// Tailnet admins can reach tagged VPS machines on TCP/22; no public access is granted.
+// Tailscale SSH requires BOTH the network grant and the SSH authorization rule.
+// SSH rules do not replace /home/<user>/.ssh/authorized_keys for OpenSSH.
 {
   "tagOwners": {
-    "tag:vps":              ["autogroup:admin"],
-    "tag:dev":              ["autogroup:admin"],
-    "tag:staging":          ["autogroup:admin"],
-    "tag:production":       ["autogroup:admin"],
-    "tag:deployeddigital":  ["autogroup:admin"]
+    "tag:vps": ["autogroup:admin"],
+    "tag:dev": ["autogroup:admin"],
+    "tag:staging": ["autogroup:admin"],
+    "tag:production": ["autogroup:admin"],
+    "tag:deployeddigital": ["autogroup:admin"]
   },
+  "grants": [
+    {
+      "src": ["autogroup:admin"],
+      "dst": ["tag:vps"],
+      "ip": ["tcp:22"]
+    }
+  ],
   "ssh": [
     {
       "action": "accept",
-      "src":    ["autogroup:admin"],
-      "dst":    ["tag:vps"],
-      "users":  ["root", "maha", "pink"]
+      "src": ["autogroup:admin"],
+      "dst": ["tag:vps"],
+      "users": ["maha", "root"]
     }
   ]
 }

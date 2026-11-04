@@ -1,120 +1,62 @@
+# SSHID public-key installation and rotation
 
+VPSsetup supports both the base `sshid.io/<id>` response and type-specific endpoints. SSH public keys are never passwords; the server cannot authenticate a client unless that client has the matching private key.
 
-# SSH Key Installer with User Auto-Creation
+## Automatic bootstrap
 
-Updated script adds a `-c` / `--create-user` flag. When enabled, it ensures the target user exists (defaulting the username to the sshid itself) and grants sudo privileges.
+Set in `/etc/vps/bootstrap.env`:
 
-## Run `addnew-sshid-key.sh`
-For new user
-
-## Key behaviors
-
-|Flags|Target user|
-|---|---|
-|_(none)_|`root`|
-|`-c`|`$SSHID` (e.g. `mahakoala`)|
-|`-u pink`|`pink`|
-|`-u pink -c`|`pink` (created if missing)|
-
-When `-c` is passed and the user doesn't exist:
-
-1. **Username validation** — rejects anything that's not `^[a-z_][a-z0-9_-]{0,31}$`.
-2. **Home dir created** with `adduser --disabled-password` on Debian/Ubuntu, or `useradd -m` + `passwd -l` on RHEL/Alpine/others.
-3. **Password is locked** — the account can only be accessed via SSH key.
-4. **Default shell**: `/bin/bash` (override with `--shell /usr/bin/zsh` etc.).
-5. **Sudo group**: added to `sudo` (Debian/Ubuntu) or `wheel` (RHEL/Arch), whichever exists.
-6. **Passwordless sudo**: on by default via `/etc/sudoers.d/90-<user>`, validated with `visudo -cf` before install. Disable with `--no-nopasswd`.
-
-If the user already exists, `-c` only ensures sudo group membership and sudoers entry — it won't recreate or touch the home directory.
-
-- Refuses to operate on any existing user with UID < 1000 (except explicit `root`).
-- Refuses invalid usernames outright.
-- Falls back gracefully if neither `sudo` nor `wheel` group exists (warns instead of failing).
-- `visudo -cf` is run against the new sudoers file before it's trusted; on syntax error it's rolled back and the script aborts.
-
-## Usage
-
-```
-# Create user 'mahakoala' with sudo + install RSA key
-sudo bash add-sshid-key.sh -c
-
-# Create user 'pink', install all sshid key types for mahakoala into pink
-sudo bash add-sshid-key.sh -i mahakoala -u pink -c -t ALL
-
-# Create user but require password for sudo
-sudo bash add-sshid-key.sh -c --no-nopasswd
-# One-liner recovery via curl (e.g. from web console)
-curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/add-sshid-key.sh \
-  | sudo bash -s -- -i mahakoala -c
+```bash
+SSH_ID="mahakoala"
+SSH_ID_TYPED_KEYS="RSA ECDSA-SK"
+SSH_GH_USER=""
+SSH_AUTHORIZED_KEYS=""
 ```
 
-## Verify afterwards
+The standalone `vps-bootstrap.sh` tries:
 
-```
-# From the VPS
-id mahakoala
-sudo -l -U mahakoala
-cat /home/mahakoala/.ssh/authorized_keys
-
-# From your laptop
-ssh mahakoala@<vps-ip>
-# inside: sudo -n true && echo "passwordless sudo works"
+```text
+https://sshid.io/mahakoala
+https://sshid.io/mahakoala/RSA
+https://sshid.io/mahakoala/ECDSA-SK
 ```
 
+It verifies each public-key line using `ssh-keygen`, skips HTML/error pages or malformed lines, deduplicates by key type and payload, and mirrors valid keys to root's recovery account. A 404 from a typed endpoint does **not** delete or invalidate valid base keys.
 
-# SSH Key Installer Update (preexisting user) Script
+Neither cloud-init nor the one-line installer is required when running the bootstrap independently:
 
-A hardened, idempotent script that wraps your sequence into something safer to run repeatedly and across different SSH id sources.
-
-## Run `addupdate-sshid-key.sh`
-For existing user (maha)
-
-
-## Save and run
-
-```
-# Save it once
-sudo install -m 0755 /dev/stdin /usr/local/sbin/add-sshid-key.sh <<'EOF'
-# ... paste script above ...
-EOF
-
-# Default: install mahakoala/RSA into root
-sudo add-sshid-key.sh
-
-# Install into a non-root user
-sudo add-sshid-key.sh -u maha
-
-# Fetch ALL key types
-sudo add-sshid-key.sh -i mahakoala -t ALL
-
-# Different id, different user, skip reload
-sudo add-sshid-key.sh -i someone -u maha -t ED25519 --no-reload
+```bash
+sudo /usr/local/sbin/vps-bootstrap.sh
 ```
 
-## What it does beyond your original snippet
+## Standalone key management
 
-|Original behavior|Script improvement|
-|---|---|
-|`grep -qxFf file1 file2` checks each line of file1 against any line of file2, but the shortcut "present → skip, else append whole file" meant a single new key would re-append the whole file.|Dedupes **line-by-line**, so partial overlaps don't duplicate existing keys.|
-|Hard-coded `root` user|`-u USER` flag; resolves real `$HOME` via `getent`; fixes ownership to that user.|
-|Hard-coded `RSA`|`-t RSA|
-|No validation of fetched content|Rejects HTML/error pages that aren't SSH keys.|
-|Temp file left on failure|`trap` cleans up on any exit path.|
-|`systemctl reload ssh` only|Falls back to `sshd.service`; warns (rather than fails) if neither exists. Notes that reload isn't actually required since `sshd` re-reads `authorized_keys` on every login.|
-|Blind `chmod/chown`|`install -d -m 700 -o USER -g USER` creates `~/.ssh` with correct ownership from the start.|
-|No logging|Colored `[ok]`, `[warn]`, `[fail]` output and a final summary.|
-|No error handling|`set -Eeuo pipefail`, arg validation, curl timeouts, and a clear error on bad sshid.|
+- [`addnew-sshid-key.sh`](addnew-sshid-key.sh) can create the target account if explicitly requested.
+- [`addupdate-sshid-key.sh`](addupdate-sshid-key.sh) updates an existing account's `authorized_keys`.
+- Supported typed key selectors include `RSA`, `ED25519`, `ECDSA` and `ECDSA-SK`. `ALL` requests all supported types.
 
-## Integration with your `vps-init.sh`
+```bash
+# Example: add ECDSA-SK public key to an existing 'maha' account
+sudo bash addupdate-sshid-key.sh -i mahakoala -u maha -t ECDSA-SK
 
-You can drop this in as a helper that the bootstrap script calls, or use it standalone for quick recovery:
-
-```
-# Recover access to a VPS where you only have console/web-shell:
-curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/add-sshid-key.sh \
-  | sudo bash -s -- -i mahakoala -u root
+# Example: create a different user and install available types
+sudo bash addnew-sshid-key.sh -i mahakoala -u operator -c -t ALL
 ```
 
+Every fetched line is validated, and unchanged keys aren't re-appended. Keep root console access while rotating/removing keys. This repo does **not** revoke old keys automatically; review and remove obsolete entries manually after confirming new access.
 
+## Check fingerprints
 
----
+On the server:
+
+```bash
+sudo ssh-keygen -lf /home/maha/.ssh/authorized_keys
+```
+
+On Windows PowerShell:
+
+```powershell
+Get-ChildItem "$env:USERPROFILE\.ssh\*.pub" | ForEach-Object { ssh-keygen -lf $_.FullName }
+```
+
+Compare fingerprints, not just key comments. A hardware-backed `ECDSA-SK` private-key stub and physical security key may be needed on the connecting workstation. See [Hetzner recovery](docs/HETZNER.md).

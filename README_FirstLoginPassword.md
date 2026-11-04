@@ -1,57 +1,31 @@
-# First-Login Password Prompt
+# SSH-key-only accounts and optional first-login password prompt
 
-When the bootstrap creates the primary user (`$VPS_USER`), it does so with `useradd -m` and never sets a password. The account is therefore in a locked-password state — usable only via SSH key. That's safe, but it leaves one rough edge: the moment someone needs a password (sudo with `ENABLE_PASSWORDLESS_SUDO=0`, console rescue, switching from key-only to password-or-key auth, etc.), the account has none and the user has to remember to run `passwd` themselves.
+VPSsetup creates `$VPS_USER` with `useradd -m`. New accounts do **not** get a default password. A password-locked Linux account can still authenticate with authorized SSH public keys when OpenSSH is configured appropriately.
 
-This hook closes that gap. The first time the user lands in an interactive bash shell — whether via `ssh user@host`, `su user`, `su - user`, or a console login — it prompts them to set a password, then disables itself.
+## Recommended default: SSH-key-only
 
-## Files involved
+`FIRST_LOGIN_PASSWORD_PROMPT=0` is the default in `bootstrap.env` and `cloud-init.yaml`. The bootstrap removes its own `~/.firstlogin-passwd.sh` if it exists, leaves a newly created account without a password, and uses `ALLOW_PASSWORD_AUTH=no` and `KbdInteractiveAuthentication no` through `vps-harden.sh`.
 
-| Path | Purpose |
-|---|---|
-| `~/.firstlogin-passwd.sh` | The hook itself. Mode `700`, owned by `$VPS_USER`. Written by the bootstrap. |
-| `~/.bashrc` | Has one appended line that sources the hook. |
-| `~/.password_set` | Sentinel created on success. Its presence short-circuits the hook. |
+**Do not expect a password to be assigned**. A password prompt from your SSH client usually means it has not offered a matching private key; compare `ssh-keygen -lf ~/.ssh/authorized_keys` on the server with public-key fingerprints on your workstation. To avoid the fallback prompt:
 
-## Behavior
+```bash
+ssh -o PreferredAuthentications=publickey -o PasswordAuthentication=no maha@SERVER_IP
+```
 
-The hook (sourced near the bottom of `~/.bashrc`) performs these checks in order:
+For existing Linux users, switching this flag does not automatically delete a previously set password; it disables the project-generated first-login prompt. OpenSSH password authentication is disabled separately by the hardening worker.
 
-1. **Non-interactive shell?** Returns immediately. The hook only runs when there's a TTY (`[ -t 0 ]`), so scripted shells, `bash -c`, and SFTP-only sessions are unaffected.
-2. **Sentinel exists?** Returns immediately. After a successful password set, `~/.password_set` is dropped — the hook costs nothing on subsequent logins.
-3. **`sudo -n passwd -S $USER`** is read to determine state:
-   - `L` (locked) or `NP` (no password) → prompt the user.
-   - `P` (valid password) → silently create the sentinel, never bother again.
-   - Anything else (e.g. sudo refused) → do nothing this round.
-4. **Prompt:** prints a short welcome, then calls `sudo passwd "$USER"`, which prompts the user to enter and confirm a new password. On success, the sentinel is created. On Ctrl-C or mismatch, no sentinel is written and the hook tries again next login.
+## Opt-in password prompt
 
-`sudo -n` (non-interactive) and `sudo passwd` both depend on the user having NOPASSWD sudo, which the bootstrap already grants when `ENABLE_PASSWORDLESS_SUDO=1` (the default).
+Set `FIRST_LOGIN_PASSWORD_PROMPT=1` in `/etc/vps/bootstrap.env`, then run `sudo /usr/local/sbin/vps-bootstrap.sh`. For users who specifically want it, the worker creates `~/.firstlogin-passwd.sh`, sourced by `~/.vps-shell.sh` in interactive Bash shells. It prompts once and creates `~/.password_set` on successful password creation. It requires `ENABLE_PASSWORDLESS_SUDO=1`. It is **not** needed for SSH-key authentication.
 
-## Why a userland hook instead of `chage -d 0` / `passwd -e`
+To disable it later, set the flag back to `0` and rerun only the bootstrap worker. You do **not** need cloud-init or the full installer.
 
-The standard "force password change at next login" mechanisms (`chage -d 0 user`, `passwd -e user`) rely on PAM detecting an expired password during account/session phases. This works reliably for SSH password auth, but `su user` from root often skips the expiration prompt entirely depending on the PAM stack. Worse, both mechanisms require the account to *have* a password to mark expired; a freshly-created locked account has nothing to expire.
+## Verify
 
-The userland hook in `~/.bashrc` runs unconditionally on every interactive shell, regardless of how the user got there, and is independent of PAM configuration. It also gives the user a clear human-readable prompt rather than the terse "WARNING: Your password has expired" message.
+```bash
+sudo passwd -S "$USER"          # L: password locked, P: password set
+sudo sshd -T | grep -E 'passwordauthentication|pubkeyauthentication|kbdinteractiveauthentication'
+sudo /usr/local/sbin/VerifyChecklist.sh
+```
 
-## Where the bootstrap wires it in
-
-- **`vps-bootstrap.sh`**, section **4b. First-login password prompt** — writes `~/.firstlogin-passwd.sh` and `chown`s/`chmod`s it.
-- **`vps-bootstrap.sh`**, section **9. Shell niceties** — appends the source line to `~/.bashrc` via `append_line_if_missing`.
-- **`vps-init.sh`** — same edits, mirrored inside the `BOOTSTRAP_EOF` heredoc that generates `vps-bootstrap.sh`.
-
-Both copies must stay in sync.
-
-## Customization
-
-| To... | Do this |
-|---|---|
-| Disable for a specific user after bootstrap | `touch ~/.password_set` |
-| Re-trigger the prompt (e.g. you want to set a new password) | `rm ~/.password_set && passwd -l $USER` then start a new shell |
-| Change the welcome wording | Edit the `cat > "$FIRSTLOGIN" <<'HOOK'` block in both `vps-bootstrap.sh` and `vps-init.sh` |
-| Skip the feature entirely | Remove the `4b` section and the matching `append_*` line from both scripts |
-
-## Caveats
-
-- **Shell must be bash.** `~/.bashrc` is bash-specific. If `VPS_USER_SHELL` is overridden to zsh/fish/etc., the hook needs to be sourced from that shell's rc file instead.
-- **Requires NOPASSWD sudo.** If `ENABLE_PASSWORDLESS_SUDO=0`, `sudo -n passwd -S` fails and the hook silently does nothing — but in that scenario the operator has clearly opted into a different password-management workflow anyway.
-- **Doesn't unlock the account itself.** `useradd` leaves the password locked (`!` in `/etc/shadow`); `sudo passwd $USER` sets a new password and unlocks it as a side effect. If for some reason the account remains locked after `passwd`, run `sudo passwd -u $USER`.
-- **Sentinel is per-user.** If you re-create the user's home directory or wipe `~/.password_set`, the prompt will fire again on next login. That's intentional — you want it to fire when the home directory is fresh.
+The installer never generates or prints a default password. Keep Hetzner's console or another verified root session open until a new SSH-key login has been tested.

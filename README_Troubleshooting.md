@@ -716,3 +716,79 @@ sudo bash <(curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main
 ```
 
 If verify passes, you're done. If verify fails, the failed lines point at the section in this doc. Don't make the mistake (we've all done it) of "fixing it manually" — usually re-running the relevant script picks up where it left off.
+
+
+---
+
+## 9. Portable/cloud-init parity (new installer)
+
+### Cloud-init `scripts_user` / `runcmd` error
+
+The file was parsed and execution failed. Check `sudo tail -n 100 /var/log/hetzner-firstboot.log` and `/var/log/vps-bootstrap.log`. Do **not** `cloud-init clean` on a working instance merely to erase the historical error. Cloud-init runs the same `vps-init.sh` used by non-cloud-init providers.
+
+### `curl: (22) ... 404` after swap setup
+
+The old script could construct a download URL using `BASE=https://raw.githubusercontent.com/.../cloud-init.yaml` and then append `/vps-bootstrap.sh`. `BASE` must be a **repository directory**. The revised installer uses `VPS_SETUP_REF` and downloads worker filenames directly. To test:
+
+```bash
+curl -fLsS -o /dev/null -w '%{http_code}\n' \
+  https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-bootstrap.sh
+```
+
+### SSHID RSA/ECDSA-SK endpoint returned unexpected data
+
+Typed SSHID responses sometimes differ from a single strict `ssh-rsa ...` line. The worker now validates **each** returned OpenSSH key, ignores malformed/HTML entries, and preserves the base `sshid.io/<id>` keys. Validate fingerprints in `/home/$VPS_USER/.ssh/authorized_keys` with `ssh-keygen -lf` and compare to your laptop's public keys. A successful download does not prove the client has the matching private key.
+
+### SSH client requests a password for the new account
+
+No default Linux password exists. `FIRST_LOGIN_PASSWORD_PROMPT=0` disables the old first-login prompt, and the hardener disables SSH password authentication. Your client is probably not offering the correct key; diagnose with `ssh -vvv -o PasswordAuthentication=no USER@HOST`. Keep the provider console available.
+
+### Re-run creates password prompt
+
+Re-run the **new** standalone `vps-bootstrap.sh` after setting `FIRST_LOGIN_PASSWORD_PROMPT=0` in `/etc/vps/bootstrap.env`; it removes its own old password hook. The main installer no longer contains an embedded bootstrap copy.
+
+### Public SSH cannot be disabled with `PUBLIC_SSH_ALLOWED=0`
+
+First successfully open a **new** SSH session via Tailscale. Then set `TAILNET_SSH_VERIFIED=1` in the env file and rerun `vps-harden.sh`. A joined tailnet is not proof of SSH authorization. See [Hetzner guide](docs/HETZNER.md).
+
+### Script installed but a single worker needs rerunning
+
+```bash
+sudo /usr/local/sbin/vps-swap.sh
+sudo /usr/local/sbin/vps-bootstrap.sh
+sudo /usr/local/sbin/vps-harden.sh
+sudo /usr/local/sbin/VerifyChecklist.sh
+```
+
+Each independently reads `/etc/vps/bootstrap.env` and does not depend on cloud-init.
+
+---
+
+## 10. `ERROR: SSH effective configuration differs from requested values`
+
+On Ubuntu/OpenSSH, `sshd -T` can normalize `PermitRootLogin prohibit-password` to its equivalent legacy spelling `without-password`. Earlier VPSsetup versions compared the literal text and could reject a secure configuration.
+
+The current hardening worker treats those two values as equivalent, **but it still rejects actual mismatches** in `PasswordAuthentication`, `PubkeyAuthentication`, and `PermitRootLogin`. On a mismatch it prints the requested and effective values and restores the previous project-managed SSH drop-in without applying the invalid configuration.
+
+Check the actual policy safely from the existing root console:
+
+```bash
+sudo sshd -T | grep -E '^(passwordauthentication|pubkeyauthentication|permitrootlogin|kbdinteractiveauthentication|allowusers) '
+sudo grep -RniE '^[[:space:]]*(PasswordAuthentication|PubkeyAuthentication|PermitRootLogin|Include|Match)' \
+  /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null
+sudo grep -E '^(ALLOW_PASSWORD_AUTH|PERMIT_ROOT_LOGIN|VPS_USER)=' /etc/vps/bootstrap.env
+```
+
+Do **not** disable the safety check or blindly delete cloud/provider SSH drop-ins. The corrected worker reports which setting conflicts. To repair just SSH hardening after reviewing the configuration, update the worker and run `sudo bash -n /usr/local/sbin/vps-harden.sh && sudo /usr/local/sbin/vps-harden.sh`. Keep the current console open until a second SSH login succeeds.
+
+### Failed hardening left `ssh.socket` masked
+
+Older versions switched off socket activation before verifying `sshd -T`. After a failed run, check **before rebooting**:
+
+```bash
+systemctl is-active ssh.service
+systemctl is-enabled ssh.service
+systemctl is-enabled ssh.socket
+```
+
+If `ssh.service` is not enabled, keep the root console open and run `sudo systemctl enable --now ssh.service`, then `sudo sshd -t`. Only reboot after checking that at least one SSH startup path is enabled and testing a separate login. Updated hardening defers the socket transition until SSH validation passes.
