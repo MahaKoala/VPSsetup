@@ -85,21 +85,25 @@ install_brew() {
     st ok "$pkg installed"
   else
     st warn "$pkg installation failed"
+    return 1
   fi
 }
 if [[ "$CRUSH_INSTALL_BIN" == 1 ]]; then
-  install_brew charmbracelet/tap/crush
+  if ! install_brew charmbracelet/tap/crush; then
+    echo "[STATUS] fail|crush package|Crush binary install failed" >&2
+    exit 1
+  fi
 fi
 if [[ "$CRUSH_MCP_PROFILE" != none ]]; then
-  command -v node >/dev/null 2>&1 || install_brew node
+  command -v node >/dev/null 2>&1 || install_brew node || st warn "Node unavailable"
 fi
-if [[ "$CRUSH_MCP_PROFILE" == extended ]]; then install_brew uv; fi
+if [[ "$CRUSH_MCP_PROFILE" == extended ]]; then install_brew uv || st warn "uv unavailable"; fi
 for language in $CRUSH_LSP_PROFILE; do
   case "$language" in
-    python) install_brew ruff ;;
-    go) install_brew gopls ;;
-    rust) install_brew rust-analyzer ;;
-    web) command -v npm >/dev/null 2>&1 || install_brew node ;;
+    python) install_brew ruff || st warn "Ruff unavailable" ;;
+    go) install_brew gopls || st warn "gopls unavailable" ;;
+    rust) install_brew rust-analyzer || st warn "rust-analyzer unavailable" ;;
+    web) command -v npm >/dev/null 2>&1 || install_brew node || st warn "npm unavailable" ;;
   esac
 done
 if command -v npm >/dev/null 2>&1; then
