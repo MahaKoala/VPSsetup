@@ -68,7 +68,7 @@ if (( interactive )); then
     read -r -p "Install Homebrew? [y/N]: " answer </dev/tty
     [[ "$answer" =~ ^[Yy] ]] && INSTALL_BREW=1
     read -r -p "Install AI coding tools? [y/N]: " answer </dev/tty
-    if [[ "$answer" =~ ^[Yy] ]]; then INSTALL_TOOLS=1; INSTALL_BREW=1; fi
+    if [[ "$answer" =~ ^[Yy] ]]; then INSTALL_TOOLS=1; INSTALL_BREW=1; INSTALL_BREW_PACKAGES=1; fi
     read -r -p "Install Tailscale? [Y/n]: " answer </dev/tty
     [[ "$answer" =~ ^[Nn] ]] && INSTALL_TAILSCALE=0
     if [[ "$INSTALL_TAILSCALE" == "1" ]]; then
@@ -99,6 +99,8 @@ fi
 # Reuse the persisted settings for subsequent worker invocations.
 # shellcheck source=/dev/null
 source "$ENV_FILE"
+VPS_SETUP_REF="${VPS_SETUP_REF:-main}"
+BASE="https://raw.githubusercontent.com/MahaKoala/VPSsetup/$VPS_SETUP_REF"
 if [[ "${INSTALL_TOOLS:-0}" == "1" && "${INSTALL_BREW:-0}" != "1" ]]; then
     echo "ERROR: INSTALL_TOOLS=1 requires INSTALL_BREW=1." >&2
     exit 1
