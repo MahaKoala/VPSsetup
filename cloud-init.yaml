@@ -1,4 +1,7 @@
 #cloud-config
+# Hetzner and other cloud-init providers: paste this entire file into user-data.
+# Change VPS_USER, VPS_HOSTNAME, SSH_ID, and optionally VPS_SETUP_REF.
+# The downloaded installer/workers are ALSO usable without cloud-init.
 package_update: true
 packages:
   - curl
@@ -9,59 +12,60 @@ write_files:
     owner: root:root
     permissions: '0600'
     content: |
-      # Identity
+      # Instance identity
       VPS_USER="maha"
       VPS_USER_SHELL="/bin/bash"
       VPS_HOSTNAME="hel4.deployed.digital"
       VPS_HOSTNAME_PREFIX="deployeddigital"
       VPS_ROLE="dev"
+      # Reference can be 'main', a tag, or a pinned commit SHA.
+      VPS_SETUP_REF="main"
 
-      # SSH public-key sources
+      # SSH key sources (at least one required for a fresh VPS)
       SSH_ID="mahakoala"
+      SSH_ID_TYPED_KEYS="RSA ECDSA-SK"
       SSH_GH_USER=""
       SSH_AUTHORIZED_KEYS=""
-
-      # Sudo
+      FIRST_LOGIN_PASSWORD_PROMPT="0"
       ENABLE_PASSWORDLESS_SUDO="1"
 
-      # Initial account remains SSH-key-only (no password prompt)
-      FIRST_LOGIN_PASSWORD_PROMPT="0"
-
-      # Optional development tools
+      # Small VPS defaults: opt in to heavy development packages.
       INSTALL_BREW="0"
       INSTALL_BREW_PACKAGES="0"
       BREW_PACKAGES=""
       INSTALL_NODE_LTS="0"
       INSTALL_DOCKER="0"
+      INSTALL_TOOLS="0"
 
-      # Swap: calculate from actual RAM, not an instance-specific size
+      # Portable RAM-aware swap (50%, with bounds and disk reserve)
       SWAP_MODE="auto"
       SWAP_PERCENT="50"
       SWAP_MIN_MB="512"
       SWAP_MAX_MB="4096"
       SWAP_DISK_RESERVE_MB="1024"
+      SWAP_FILE="/swapfile"
 
-      # SSH hardening
+      # SSH, firewall, and hardening
       SSH_PORT="22"
       HARDEN_SSH="1"
       ALLOW_PASSWORD_AUTH="no"
       PERMIT_ROOT_LOGIN="prohibit-password"
       LIMIT_SSH_TO_ADMIN_USER="1"
-      DISABLE_IPV6_SSH="0"
-
-      # Firewall and security
       ENABLE_UFW="1"
       PUBLIC_SSH_ALLOWED="1"
+      TAILNET_SSH_VERIFIED="0"
       ALLOW_HTTP_HTTPS="0"
       ENABLE_FAIL2BAN="1"
       ENABLE_UNATTENDED="1"
       ENABLE_SYSCTL_HARDENING="1"
 
-      # Tailscale (authenticate interactively after first boot)
+      # Tailscale: install first; authenticate interactively or with
+      # an ephemeral auth key supplied securely after provisioning.
       INSTALL_TAILSCALE="1"
       TAILSCALE_AUTHKEY=""
       TAILSCALE_TAGS=""
       TAILSCALE_SSH="1"
+      TAILSCALE_ACCEPT_DNS="false"
       TAILSCALE_EXTRA_ARGS="--accept-routes"
 
   - path: /usr/local/sbin/hetzner-firstboot.sh
@@ -70,211 +74,16 @@ write_files:
     content: |
       #!/usr/bin/env bash
       set -Eeuo pipefail
-      umask 077
-
       exec > >(tee -a /var/log/hetzner-firstboot.log) 2>&1
       source /etc/vps/bootstrap.env
-
-      echo "=== Hetzner first-boot provisioning ==="
-
-      # Configure swap using a percentage of detected physical RAM.
-      # Preserve existing swap and do not overwrite an existing swapfile.
-      configure_swap() {
-        case "$SWAP_MODE" in
-          off)
-            echo "Swap creation disabled."
-            return 0
-            ;;
-          auto) ;;
-          *)
-            echo "ERROR: Invalid SWAP_MODE: $SWAP_MODE" >&2
-            return 1
-            ;;
-        esac
-
-        local value ram_kb ram_mb target_mb available_mb
-        for value in "$SWAP_PERCENT" "$SWAP_MIN_MB" "$SWAP_MAX_MB" "$SWAP_DISK_RESERVE_MB"; do
-          if ! [[ "$value" =~ ^[0-9]+$ ]]; then
-            echo "ERROR: Swap settings must be nonnegative integers." >&2
-            return 1
-          fi
-        done
-
-        if (( SWAP_PERCENT < 1 || SWAP_PERCENT > 100 ||
-              SWAP_MIN_MB < 1 || SWAP_MAX_MB < SWAP_MIN_MB )); then
-          echo "ERROR: Invalid swap percentage or bounds." >&2
-          return 1
-        fi
-
-        if swapon --noheadings --show=NAME | grep -q '[^[:space:]]'; then
-          echo "Existing active swap found; preserving it."
-          swapon --show
-          return 0
-        fi
-
-        if [[ -e /swapfile ]]; then
-          echo "Existing /swapfile found but inactive; not modifying it."
-          return 0
-        fi
-
-        ram_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
-        if ! [[ "$ram_kb" =~ ^[0-9]+$ ]]; then
-          echo "ERROR: Unable to detect physical RAM." >&2
-          return 1
-        fi
-
-        ram_mb=$(( (ram_kb + 1023) / 1024 ))
-        target_mb=$(( ram_mb * SWAP_PERCENT / 100 ))
-        (( target_mb < SWAP_MIN_MB )) && target_mb="$SWAP_MIN_MB"
-        (( target_mb > SWAP_MAX_MB )) && target_mb="$SWAP_MAX_MB"
-
-        available_mb="$(df -Pm / | awk 'NR == 2 {print $4}')"
-        if ! [[ "$available_mb" =~ ^[0-9]+$ ]]; then
-          echo "ERROR: Unable to detect free disk space." >&2
-          return 1
-        fi
-
-        if (( available_mb < target_mb + SWAP_DISK_RESERVE_MB )); then
-          echo "WARN: Insufficient disk space for swap; skipping."
-          return 0
-        fi
-
-        echo "Physical RAM: $ram_mb MB; allocating $target_mb MB swap."
-        fallocate -l "$target_mb"M /swapfile
-        chmod 600 /swapfile
-        mkswap /swapfile
-        swapon /swapfile
-
-        if ! awk '$1 == "/swapfile" {found=1} END {exit !found}' /etc/fstab; then
-          printf '%s\n' '/swapfile none swap sw 0 0' >> /etc/fstab
-        fi
-        swapon --show
-      }
-
-      configure_swap
-
-      # Download provisioning workers from a pinned repository revision.
-      # BASE must be a directory, never a path ending in cloud-init.yaml.
-      BASE="https://raw.githubusercontent.com/MahaKoala/VPSsetup/5132d54cab926f3b9898634c61ebc9bd6fa69a22"
-      for script in vps-bootstrap.sh vps-harden.sh; do
-        curl -fLsS --retry 3 --max-time 120 \
-          "$BASE/$script" -o "/usr/local/sbin/$script"
-        chmod 700 "/usr/local/sbin/$script"
-      done
-
-      # OpenSSH no longer accepts the obsolete "Protocol 2" directive.
-      sed -i '/^[[:space:]]*echo "Protocol 2"$/d' \
-        /usr/local/sbin/vps-harden.sh
-
-      # Bootstrap creates the account, home directory and base packages.
-      /usr/local/sbin/vps-bootstrap.sh
-
-      # Bootstrap can update the hostname/config; reload it.
-      source /etc/vps/bootstrap.env
-
-      # Determine the real home path from the configured Linux account.
-      USER_HOME="$(getent passwd "$VPS_USER" | cut -d: -f6)"
-      if [[ -z "$USER_HOME" || ! -d "$USER_HOME" ]]; then
-        echo "ERROR: No home directory for VPS_USER=$VPS_USER" >&2
-        exit 1
-      fi
-
-      # The bootstrap script adds a first-login passwd prompt by default.
-      # Disable that hook for key-only accounts and lock password login.
-      if [[ "${FIRST_LOGIN_PASSWORD_PROMPT:-0}" == "0" ]]; then
-        rm -f "$USER_HOME/.firstlogin-passwd.sh"
-        passwd -l "$VPS_USER" >/dev/null
-        echo "SSH-key-only user $VPS_USER: no initial password."
-      fi
-
-      USER_AUTH="$USER_HOME/.ssh/authorized_keys"
-      ROOT_AUTH="/root/.ssh/authorized_keys"
-
-      install -d -m 700 -o "$VPS_USER" -g "$VPS_USER" "$USER_HOME/.ssh"
-      install -d -m 700 -o root -g root /root/.ssh
-      touch "$USER_AUTH" "$ROOT_AUTH"
-
-      # Try both explicit SSHID endpoints. Some responses contain
-      # multiple lines or unexpected content; only install valid keys.
-      fetch_typed_sshid_keys() {
-        local kind="$1" expected_type="$2"
-        local url response line key_type key_blob key_comment key tmp
-        local found=0
-
-        url="https://sshid.io/$SSH_ID/$kind"
-        echo "Fetching SSH public keys from $url"
-
-        if ! response="$(curl -fsSL --retry 3 --max-time 30 "$url")"; then
-          echo "WARN: $kind endpoint unavailable; retaining bootstrap keys."
-          return 0
-        fi
-
-        while IFS= read -r line || [[ -n "$line" ]]; do
-          line="$(printf '%s' "$line" | tr -d '\r')"
-          read -r key_type key_blob key_comment <<< "$line"
-          [[ "$key_type" == "$expected_type" && -n "$key_blob" ]] || continue
-
-          key="$key_type $key_blob"
-          [[ -n "$key_comment" ]] && key+=" $key_comment"
-
-          tmp="$(mktemp)"
-          printf '%s\n' "$key" > "$tmp"
-          if ssh-keygen -lf "$tmp" >/dev/null 2>&1; then
-            for auth_file in "$USER_AUTH" "$ROOT_AUTH"; do
-              grep -qxF "$key" "$auth_file" ||
-                printf '%s\n' "$key" >> "$auth_file"
-            done
-            found=$((found + 1))
-          else
-            echo "WARN: Discarded malformed $kind public key."
-          fi
-          rm -f "$tmp"
-        done <<< "$response"
-
-        echo "$kind: $found validated key(s) fetched."
-        if (( found == 0 )); then
-          echo "WARN: No valid $expected_type keys at typed endpoint."
-          echo "      Keeping valid keys from the SSHID base endpoint."
-        fi
-      }
-
-      if [[ -n "$SSH_ID" ]]; then
-        fetch_typed_sshid_keys RSA ssh-rsa
-        fetch_typed_sshid_keys ECDSA-SK sk-ecdsa-sha2-nistp256@openssh.com
-      fi
-
-      # Validate that at least one key exists for the provisioned user.
-      # This does not prove the Windows SSH client possesses the private key.
-      # Verify usable keys before disabling SSH password authentication.
-      for auth_file in "$USER_AUTH" "$ROOT_AUTH"; do
-        if [[ ! -s "$auth_file" ]] ||
-           ! ssh-keygen -lf "$auth_file" >/dev/null 2>&1; then
-          echo "ERROR: No valid SSH public key in $auth_file" >&2
-          exit 1
-        fi
-      done
-
-      # Report missing key types, but retain valid working SSH access.
-      for expected_type in ssh-rsa sk-ecdsa-sha2-nistp256@openssh.com; do
-        if ! awk -v type="$expected_type" \
-          '$1 == type {found=1} END {exit !found}' "$USER_AUTH"; then
-          echo "WARN: No $expected_type key installed for $VPS_USER."
-        fi
-      done
-
-      chown "$VPS_USER:$VPS_USER" "$USER_HOME/.ssh" "$USER_AUTH"
-      chmod 700 "$USER_HOME/.ssh"
-      chmod 600 "$USER_AUTH"
-      chown root:root /root/.ssh "$ROOT_AUTH"
-      chmod 700 /root/.ssh
-      chmod 600 "$ROOT_AUTH"
-
-      echo "Validated SSH access keys for $VPS_USER and root."
-
-      # Harden only after SSH public keys have been installed.
-      /usr/local/sbin/vps-harden.sh
-
-      echo "=== Hetzner first-boot provisioning complete ==="
+      VPS_SETUP_REF="${VPS_SETUP_REF:-main}"
+      BASE="https://raw.githubusercontent.com/MahaKoala/VPSsetup/$VPS_SETUP_REF"
+      echo "Installing VPSsetup from $BASE (repository directory)"
+      curl -fLsS --retry 3 --max-time 120 \
+        "$BASE/vps-init.sh" -o /usr/local/sbin/vps-init.sh
+      chmod 700 /usr/local/sbin/vps-init.sh
+      bash -n /usr/local/sbin/vps-init.sh
+      NONINTERACTIVE=1 RUN_VERIFY=1 /usr/local/sbin/vps-init.sh
 
 runcmd:
   - [bash, /usr/local/sbin/hetzner-firstboot.sh]
