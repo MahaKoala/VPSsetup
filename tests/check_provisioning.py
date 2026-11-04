@@ -47,10 +47,10 @@ assert "HARDEN_EOF" not in installer
 assert "Protocol 2" not in (ROOT / "vps-harden.sh").read_text()
 assert "ufw --force reset" not in (ROOT / "vps-harden.sh").read_text()
 assert "TAILNET_SSH_VERIFIED" in (ROOT / "vps-harden.sh").read_text()
-# Regression: OpenSSH may report 'without-password' for 'prohibit-password'.
+# Regression: OpenSSH may report "without-password" for "prohibit-password".
 harden_text = (ROOT / "vps-harden.sh").read_text()
 start = harden_text.index("    canonical_root_login() {")
-end = harden_text.index("\\n    }", start) + len("\\n    }")
+end = harden_text.index("\n    }", start) + len("\n    }")
 normalize_fn = harden_text[start:end]
 for original, expected in (
     ("without-password", "prohibit-password"),
@@ -59,7 +59,7 @@ for original, expected in (
     ("yes", "yes"),
 ):
     output = subprocess.check_output(
-        ["bash", "-c", normalize_fn + "\\ncanonical_root_login \\"$1\\"", "_", original],
+        ["bash", "-c", normalize_fn + '\ncanonical_root_login "$1"', "_", original],
         text=True,
     )
     assert output == expected, f"{original}: expected {expected}, got {output}"
