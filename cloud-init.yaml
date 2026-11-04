@@ -24,6 +24,9 @@ write_files:
       # Sudo
       ENABLE_PASSWORDLESS_SUDO="1"
 
+      # Initial account remains SSH-key-only (no password prompt)
+      FIRST_LOGIN_PASSWORD_PROMPT="0"
+
       # Optional development tools
       INSTALL_BREW="0"
       INSTALL_BREW_PACKAGES="0"
@@ -176,6 +179,14 @@ write_files:
         exit 1
       fi
 
+      # The bootstrap script adds a first-login passwd prompt by default.
+      # Disable that hook for key-only accounts and lock password login.
+      if [[ "${FIRST_LOGIN_PASSWORD_PROMPT:-0}" == "0" ]]; then
+        rm -f "$USER_HOME/.firstlogin-passwd.sh"
+        passwd -l "$VPS_USER" >/dev/null
+        echo "SSH-key-only user $VPS_USER: no initial password."
+      fi
+
       USER_AUTH="$USER_HOME/.ssh/authorized_keys"
       ROOT_AUTH="/root/.ssh/authorized_keys"
 
@@ -232,6 +243,8 @@ write_files:
         fetch_typed_sshid_keys ECDSA-SK sk-ecdsa-sha2-nistp256@openssh.com
       fi
 
+      # Validate that at least one key exists for the provisioned user.
+      # This does not prove the Windows SSH client possesses the private key.
       # Verify usable keys before disabling SSH password authentication.
       for auth_file in "$USER_AUTH" "$ROOT_AUTH"; do
         if [[ ! -s "$auth_file" ]] ||
