@@ -12,7 +12,7 @@ write_files:
     permissions: '0600'
     content: |
       # Identity
-      VPS_USER="pink"
+      VPS_USER="maha"
       VPS_USER_SHELL="/bin/bash"
       VPS_HOSTNAME="hel4.deployed.digital"
       VPS_HOSTNAME_PREFIX="deployeddigital"
