@@ -157,13 +157,6 @@ if bool "$HARDEN_SSH"; then
     } > "$DROPIN"
     chmod 644 "$DROPIN"
 
-    # Ubuntu 24.04 ships ssh.socket socket-activated. Drop-in changes don't
-    # always apply on first restart unless we disable AND mask the socket and
-    # use the classic ssh.service. Masking prevents apt operations / package
-    # hooks from re-enabling it later.
-    systemctl disable --now ssh.socket 2>/dev/null || true
-    systemctl mask ssh.socket 2>/dev/null || true
-
     # /run/sshd must exist for sshd -t / sshd -T (privilege-separation dir).
     # /run is a tmpfs; the directory is normally materialised by ssh.service's
     # RuntimeDirectory=sshd at start time, but `sshd -t` runs before that so
@@ -219,6 +212,12 @@ if bool "$HARDEN_SSH"; then
         exit 1
     fi
     rm -f "${DROPIN}.bak"
+
+    # Transition from socket activation only AFTER sshd -t and the
+    # effective-policy checks have passed. A failed validation must not mask
+    # ssh.socket and leave an otherwise healthy server without SSH on reboot.
+    systemctl disable --now ssh.socket 2>/dev/null || true
+    systemctl mask ssh.socket 2>/dev/null || true
 
     systemctl enable ssh.service 2>/dev/null || true
 
