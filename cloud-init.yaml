@@ -83,7 +83,7 @@ write_files:
         "$BASE/vps-init.sh" -o /usr/local/sbin/vps-init.sh
       chmod 700 /usr/local/sbin/vps-init.sh
       bash -n /usr/local/sbin/vps-init.sh
-      NONINTERACTIVE=1 RUN_VERIFY=1 /usr/local/sbin/vps-init.sh
+      VPS_SETUP_REF="$VPS_SETUP_REF" NONINTERACTIVE=1 RUN_VERIFY=1 /usr/local/sbin/vps-init.sh
 
 runcmd:
   - [bash, /usr/local/sbin/hetzner-firstboot.sh]
