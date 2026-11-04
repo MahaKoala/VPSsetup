@@ -1,55 +1,209 @@
-#Paste this into Hetzner's **Cloud config / user-data** field. Replace placeholders.
-#For **DigitalOcean**, the same YAML works; for **Vultr**, paste it into "User Data"; for **Linode**, into "StackScript" or user-data. Provider differences are minor — the hostname auto-detector here only queries Hetzner's metadata endpoint; on others it falls back to `/etc/machine-id`.
+
 #cloud-config
 package_update: true
-package_upgrade: true
+packages:
+  - curl
+  - ca-certificates
 
 write_files:
+  # VPS configuration
   - path: /etc/vps/bootstrap.env
-    permissions: "0644"
+    owner: root:root
+    permissions: '0600'
     content: |
-      VPS_USER="maha"
-      VPS_HOSTNAME=""
+      # Identity
+      VPS_USER="pink"
+      VPS_USER_SHELL="/bin/bash"
+      VPS_HOSTNAME="hel4.deployed.digital"
       VPS_HOSTNAME_PREFIX="deployeddigital"
       VPS_ROLE="dev"
 
+      # SSH key sources
       SSH_ID="mahakoala"
       SSH_GH_USER=""
       SSH_AUTHORIZED_KEYS=""
 
+      # Sudo
       ENABLE_PASSWORDLESS_SUDO="1"
 
-      INSTALL_BREW="1"
-      INSTALL_BREW_PACKAGES="1"
-      BREW_PACKAGES="starship eza tldr zoxide btop fd ripgrep bat git-delta lazygit glow ranger jq yq fzf gh node oven-sh/bun/bun pnpm yarn go"
+      # Lightweight VPS options
+      INSTALL_BREW="0"
+      INSTALL_BREW_PACKAGES="0"
+      BREW_PACKAGES=""
       INSTALL_NODE_LTS="0"
       INSTALL_DOCKER="0"
 
+      # SSH hardening
       SSH_PORT="22"
+      HARDEN_SSH="1"
       ALLOW_PASSWORD_AUTH="no"
       PERMIT_ROOT_LOGIN="prohibit-password"
       LIMIT_SSH_TO_ADMIN_USER="1"
+      DISABLE_IPV6_SSH="0"
+
+      # Firewall and security
       ENABLE_UFW="1"
       PUBLIC_SSH_ALLOWED="1"
       ALLOW_HTTP_HTTPS="0"
       ENABLE_FAIL2BAN="1"
       ENABLE_UNATTENDED="1"
+      ENABLE_SYSCTL_HARDENING="1"
 
+      # Tailscale
       INSTALL_TAILSCALE="1"
-      TAILSCALE_AUTHKEY="tskey-auth-REPLACE_ME"
-      # Leave TAILSCALE_TAGS empty to use the tags the auth key was generated
-      # with. Only set it when EVERY tag is declared in tailscale.json's
-      # tagOwners AND the auth key was generated allowing those tags.
+      TAILSCALE_AUTHKEY=""
       TAILSCALE_TAGS=""
       TAILSCALE_SSH="1"
       TAILSCALE_EXTRA_ARGS="--accept-routes"
 
+  # First-boot orchestration
+  - path: /usr/local/sbin/hetzner-firstboot.sh
+    owner: root:root
+    permissions: '0700'
+    content: |
+      #!/usr/bin/env bash
+      set -Eeuo pipefail
+      umask 077
+
+      ENV_FILE="/etc/vps/bootstrap.env"
+      source "$ENV_FILE"
+
+      echo "=== Hetzner VPS initialization ==="
+
+      # ---------------------------------
+      # 1. Configure swap
+      # ---------------------------------
+      if [ ! -f /swapfile ]; then
+        fallocate -l 1G /swapfile
+        chmod 600 /swapfile
+        mkswap /swapfile
+      fi
+
+      if ! swapon --show=NAME | grep -qx /swapfile; then
+        swapon /swapfile
+      fi
+
+      if ! grep -q '^/swapfile ' /etc/fstab; then
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+      fi
+
+      # ---------------------------------
+      # 2. Download provisioning scripts
+      # ---------------------------------
+      # Pin to the reviewed repository revision
+      BASE="https://raw.githubusercontent.com/MahaKoala/VPSsetup/5132d54cab926f3b9898634c61ebc9bd6fa69a22"
+
+      for script in vps-bootstrap.sh vps-harden.sh; do
+        curl -fsSL --retry 3 \
+          "$BASE/$script" \
+          -o "/usr/local/sbin/$script"
+
+        chmod 700 "/usr/local/sbin/$script"
+      done
+
+      # Remove obsolete SSH Protocol directive
+      sed -i \
+        '/^[[:space:]]*echo "Protocol 2"$/d' \
+        /usr/local/sbin/vps-harden.sh
+
+      # ---------------------------------
+      # 3. Bootstrap primary user
+      # ---------------------------------
+      /usr/local/sbin/vps-bootstrap.sh
+
+      # Reload configuration after bootstrap
+      source "$ENV_FILE"
+
+      # ---------------------------------
+      # 4. Resolve dynamic user paths
+      # ---------------------------------
+      USER_HOME="$(getent passwd "$VPS_USER" | cut -d: -f6)"
+
+      if [ -z "$USER_HOME" ] || [ ! -d "$USER_HOME" ]; then
+        echo "ERROR: Cannot resolve home for $VPS_USER" >&2
+        exit 1
+      fi
+
+      USER_AUTH="$USER_HOME/.ssh/authorized_keys"
+      ROOT_AUTH="/root/.ssh/authorized_keys"
+
+      install -d -m 700 \
+        -o "$VPS_USER" \
+        -g "$VPS_USER" \
+        "$USER_HOME/.ssh"
+
+      install -d -m 700 \
+        -o root -g root /root/.ssh
+
+      touch "$USER_AUTH" "$ROOT_AUTH"
+
+      # ---------------------------------
+      # 5. Fetch RSA and ECDSA-SK keys
+      # ---------------------------------
+      if [ -z "${SSH_ID:-}" ]; then
+        echo "ERROR: SSH_ID is empty" >&2
+        exit 1
+      fi
+
+      declare -a SSH_KEYS=()
+
+      for type in RSA ECDSA-SK; do
+        URL="https://sshid.io/${SSH_ID}/${type}"
+
+        echo "Fetching SSH key type: $type"
+
+        KEY="$(curl -fsSL --retry 3 "$URL")"
+
+        # Require exactly one nonempty public key
+        if [ -z "$KEY" ] || [[ "$KEY" == *$'\n'* ]]; then
+          echo "ERROR: Invalid key response for $type" >&2
+          exit 1
+        fi
+
+        case "$type:$KEY" in
+          RSA:ssh-rsa\ *)
+            ;;
+          ECDSA-SK:sk-ecdsa-sha2-nistp256@openssh.com\ *)
+            ;;
+          *)
+            echo "ERROR: Unexpected public key type: $type" >&2
+            exit 1
+            ;;
+        esac
+
+        SSH_KEYS+=("$KEY")
+      done
+
+      # ---------------------------------
+      # 6. Install authorized SSH keys
+      # ---------------------------------
+      for AUTH_FILE in "$USER_AUTH" "$ROOT_AUTH"; do
+        for KEY in "${SSH_KEYS[@]}"; do
+          if ! grep -qxF "$KEY" "$AUTH_FILE"; then
+            printf '%s\n' "$KEY" >> "$AUTH_FILE"
+          fi
+        done
+      done
+
+      # Set secure ownership and permissions
+      chown "$VPS_USER:$VPS_USER" \
+        "$USER_HOME/.ssh" "$USER_AUTH"
+
+      chmod 700 "$USER_HOME/.ssh"
+      chmod 600 "$USER_AUTH"
+
+      chown root:root /root/.ssh "$ROOT_AUTH"
+      chmod 700 /root/.ssh
+      chmod 600 "$ROOT_AUTH"
+
+      echo "SSH keys installed successfully"
+
+      # ---------------------------------
+      # 7. Harden server
+      # ---------------------------------
+      /usr/local/sbin/vps-harden.sh
+
+      echo "=== Hetzner provisioning complete ==="
+
 runcmd:
-  - mkdir -p /usr/local/sbin
-  - curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-bootstrap.sh -o /usr/local/sbin/vps-bootstrap.sh
-  - curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-harden.sh    -o /usr/local/sbin/vps-harden.sh
-  - curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-tools.sh    -o /usr/local/sbin/vps-tools.sh
-  - chmod +x /usr/local/sbin/vps-bootstrap.sh /usr/local/sbin/vps-harden.sh /usr/local/sbin/vps-tools.sh
-  - /usr/local/sbin/vps-bootstrap.sh
-  - /usr/local/sbin/vps-harden.sh
-  - /usr/local/sbin/vps-tools.sh
+  - [bash, /usr/local/sbin/hetzner-firstboot.sh]
