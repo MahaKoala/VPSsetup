@@ -8,7 +8,7 @@ write_files:
   - path: /etc/vps/bootstrap.env
     permissions: "0644"
     content: |
-      VPS_USER="pink"
+      VPS_USER="maha"
       VPS_HOSTNAME=""
       VPS_HOSTNAME_PREFIX="deployeddigital"
       VPS_ROLE="dev"
