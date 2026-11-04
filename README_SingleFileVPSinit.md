@@ -29,8 +29,9 @@ The `VPS_SETUP_REF` value selects the worker versions. New configuration is save
 1. Downloads the shared `bootstrap.env` defaults when no saved configuration exists.
 2. Saves a shell-escaped configuration and fetches `vps-swap.sh`, `vps-bootstrap.sh`, `vps-harden.sh`, `vps-tools.sh`, and `VerifyChecklist.sh`.
 3. Runs swap, base bootstrap, and hardening, in that order.
-4. Runs the optional tools worker only when `INSTALL_TOOLS=1` and `INSTALL_BREW=1`.
-5. Runs verification with `RUN_VERIFY=1` or for interactive installations.
+4. Runs the optional full tools worker only when `INSTALL_TOOLS=1` and `INSTALL_BREW=1`.
+5. **Separately**, runs the modular Crush worker only if `INSTALL_VIBECODE_CRUSH=1`. This does not require `INSTALL_TOOLS=1`.
+6. Runs verification with `RUN_VERIFY=1` or for interactive installations.
 
 Cloud-init calls **this same** `vps-init.sh` with its prewritten environment file. It does not contain or run a separate copy of bootstrap/harden logic.
 
@@ -55,10 +56,27 @@ All workers read `/etc/vps/bootstrap.env` when present; they do not depend on an
 | `SWAP_MODE` | `auto` | Independent RAM-aware swap worker; `off` skips |
 | `SWAP_PERCENT` | `50` | 50% of detected RAM, bounded by configured minimum/maximum |
 | `INSTALL_BREW` | `0` | Optional Homebrew |
-| `INSTALL_TOOLS` | `0` | Optional agent tools; requires Homebrew |
+| `INSTALL_TOOLS` | `0` | Optional complete agent suite; requires Homebrew |
+| `INSTALL_VIBECODE_CRUSH` | `0` | **Optional Crush worker only**, separate from full agent suite |
+| `CRUSH_MCP_PROFILE` | `core` | `none`, `core`, or `extended` MCPs |
+| `CRUSH_LSP_PROFILE` | `web,python` | Selected language servers: `web,python,go,rust,none` |
+| `CRUSH_INSTALL_ROOT` | `0` | Root Crush profile is opt-in; user account default |
 | `PUBLIC_SSH_ALLOWED` | `1` | Leave public SSH available initially |
 | `TAILNET_SSH_VERIFIED` | `0` | Must be `1` **after** a successful separate tailnet SSH login to disable public SSH |
 | `TAILSCALE_AUTHKEY` | empty | Installs Tailscale; authenticate later without storing a permanent key in user-data |
+
+## Optional modular AI setup (without cloud-init)
+
+To install Crush **without** the full AI toolkit, select it explicitly at first boot:
+
+```bash
+sudo env VPS_USER=maha SSH_ID=mahakoala NONINTERACTIVE=1 \
+  INSTALL_BREW=1 INSTALL_VIBECODE_CRUSH=1 \
+  CRUSH_MCP_PROFILE=core CRUSH_LSP_PROFILE=web,python \
+  bash -c 'curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh | bash'
+```
+
+This opt-in is independent of the minimal `cloud-init.yaml` defaults. If the user already exists, you can run just `vps-vibecode-crush.sh` instead. [See the Crush guide](README_VibecodeCrush.md).
 
 ## Tailscale and public SSH lockdown
 
