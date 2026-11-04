@@ -1,3 +1,7 @@
+> **Architecture update:** This document contains a historical sample transcript of the original embedded-worker interactive wizard. The current `vps-init.sh` downloads independent workers, defaults to SSH-key-only accounts with no first-login password hook, calculates swap from RAM, and installs AI tools only when requested. Some prompts and outputs in the archived example below no longer match the new installer. For an up-to-date step-by-step deployment, follow [the one-line installer guide](README_SingleFileVPSinit.md) or [Hetzner guide](docs/HETZNER.md).
+
+---
+
 # Sample Experience — what a successful run looks like
 
 A walkthrough of running `vps-init.sh` on a fresh Ubuntu 24.04 VPS, from your laptop terminal to a working tailnet-connected box. Use this as a reference for *what's normal* — if your run looks dramatically different, check [README_Troubleshooting.md](README_Troubleshooting.md).
