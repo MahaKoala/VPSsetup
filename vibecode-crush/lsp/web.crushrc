@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+if command -v vtsls >/dev/null 2>&1; then
+  lsp add typescript --command vtsls --args "--stdio" --filetypes ts --filetypes tsx --filetypes js --filetypes jsx
+fi
+if command -v biome >/dev/null 2>&1; then
+  lsp add biome --command biome --args "lsp-proxy" --filetypes js --filetypes jsx --filetypes ts --filetypes tsx --filetypes json
+fi

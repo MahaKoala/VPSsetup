@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+if command -v gopls >/dev/null 2>&1; then
+  lsp add go --command gopls --filetypes go
+fi

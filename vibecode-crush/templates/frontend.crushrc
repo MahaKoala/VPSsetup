@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Opt in by copying into your project's ./crushrc or ./.crushrc.
+mcp add playwright --command npx --args "-y" --args "@playwright/mcp@latest"
+mcp add shadcn --command npx --args "-y" --args "shadcn@latest" --args "mcp"

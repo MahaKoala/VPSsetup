@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+if command -v basedpyright-langserver >/dev/null 2>&1; then
+  lsp add basedpyright --command basedpyright-langserver --args "--stdio" --filetypes py
+fi
+if command -v ruff >/dev/null 2>&1; then
+  lsp add ruff --command ruff --args "server" --filetypes py
+fi
