@@ -17,6 +17,25 @@ mkdir -p /etc/vps
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 
+# Standalone worker: never assume cloud-init supplied every variable.
+: "${VPS_USER:=maha}"
+: "${VPS_USER_SHELL:=/bin/bash}"
+: "${VPS_HOSTNAME:=}"
+: "${VPS_HOSTNAME_PREFIX:=deployeddigital}"
+: "${VPS_ROLE:=dev}"
+: "${SSH_ID:=}"
+: "${SSH_ID_TYPED_KEYS:=RSA ECDSA-SK}"
+: "${SSH_GH_USER:=}"
+: "${SSH_AUTHORIZED_KEYS:=}"
+: "${ENABLE_PASSWORDLESS_SUDO:=1}"
+: "${FIRST_LOGIN_PASSWORD_PROMPT:=0}"
+: "${INSTALL_BREW:=0}"
+: "${INSTALL_BREW_PACKAGES:=0}"
+: "${BREW_PACKAGES:=}"
+: "${INSTALL_NODE_LTS:=0}"
+: "${INSTALL_DOCKER:=0}"
+: "${NVM_VERSION:=v0.40.3}"
+
 export DEBIAN_FRONTEND=noninteractive
 
 # ---------- helpers ----------
@@ -131,17 +150,55 @@ install -d -o "$VPS_USER" -g "$VPS_USER" -m 700 "${USER_HOME}/.ssh"
 AUTH="${USER_HOME}/.ssh/authorized_keys"
 touch "$AUTH"; chown "$VPS_USER:$VPS_USER" "$AUTH"; chmod 600 "$AUTH"
 
+# Reject HTML/error pages and malformed individual lines from remote sources.
+# Preserve existing authorized_keys and de-duplicate by key data.
 add_keys() {
-    local src="$1" data="$2"
-    [[ -z "$data" ]] && return 0
-    while IFS= read -r line; do
-        [[ -z "$line" || "$line" =~ ^# ]] && continue
-        grep -qxF "$line" "$AUTH" || { echo "$line" >> "$AUTH"; echo "  + key from $src"; }
+    local src="$1" data="$2" line kind blob extra key tmp
+    [[ -n "$data" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        [[ -n "$line" && "$line" != \#* ]] || continue
+        read -r kind blob extra <<< "$line"
+        case "$kind" in
+            ssh-rsa|ssh-ed25519|ecdsa-sha2-*|sk-ecdsa-sha2-nistp256@openssh.com|sk-ssh-ed25519@openssh.com) ;;
+            *) echo "  ! Ignoring invalid key type from $src"; continue ;;
+        esac
+        [[ -n "$blob" ]] || continue
+        key="$kind $blob"
+        [[ -n "$extra" ]] && key+=" $extra"
+        tmp="$(mktemp)"
+        printf '%s\n' "$key" > "$tmp"
+        if ssh-keygen -lf "$tmp" >/dev/null 2>&1; then
+            if ! awk -v kind="$kind" -v blob="$blob" \
+                '$1==kind && $2==blob {found=1} END {exit !found}' "$AUTH"; then
+                printf '%s\n' "$key" >> "$AUTH"
+                echo "  + valid key from $src"
+            fi
+        else
+            echo "  ! Malformed SSH key ignored from $src"
+        fi
+        rm -f "$tmp"
     done <<< "$data"
 }
+fetch_keys() {
+    local src="$1" url="$2" response
+    if response="$(curl -fLsS --retry 2 --max-time 30 "$url" 2>/dev/null)"; then
+        add_keys "$src" "$response"
+    else
+        echo "  ! Could not fetch $src; keeping previously installed keys"
+    fi
+}
 
-[[ -n "$SSH_ID" ]]      && add_keys "sshid.io/$SSH_ID"    "$(curl -fsSL "https://sshid.io/${SSH_ID}" || true)"
-[[ -n "$SSH_GH_USER" ]] && add_keys "github/$SSH_GH_USER" "$(curl -fsSL "https://github.com/${SSH_GH_USER}.keys" || true)"
+if [[ -n "$SSH_ID" ]]; then
+    fetch_keys "sshid.io/$SSH_ID" "https://sshid.io/$SSH_ID"
+    for key_type in $SSH_ID_TYPED_KEYS; do
+        case "$key_type" in RSA|ED25519|ECDSA|ECDSA-SK) ;;
+            *) echo "Unsupported SSHID key type: $key_type" >&2; exit 1 ;;
+        esac
+        fetch_keys "sshid.io/$SSH_ID/$key_type" "https://sshid.io/$SSH_ID/$key_type"
+    done
+fi
+[[ -n "$SSH_GH_USER" ]] && fetch_keys "github/$SSH_GH_USER" "https://github.com/$SSH_GH_USER.keys"
 [[ -n "$SSH_AUTHORIZED_KEYS" ]] && add_keys "env" "$SSH_AUTHORIZED_KEYS"
 
 # Mirror keys to root as a transitional safety net so you cannot lock yourself
@@ -160,6 +217,7 @@ chmod 600 "$ROOT_AUTH"
 # When root does `su $VPS_USER` (or the user logs in for the first time),
 # the user lands in an interactive shell with no password set. This hook,
 # sourced from ~/.bashrc, prompts them to set one. Self-disables after success.
+if [[ "$FIRST_LOGIN_PASSWORD_PROMPT" == "1" ]]; then
 echo "--- First-login password hook ---"
 FIRSTLOGIN="${USER_HOME}/.firstlogin-passwd.sh"
 cat > "$FIRSTLOGIN" <<'HOOK'
@@ -190,6 +248,11 @@ esac
 HOOK
 chown "$VPS_USER:$VPS_USER" "$FIRSTLOGIN"
 chmod 700 "$FIRSTLOGIN"
+
+else
+    echo "--- SSH-key-only login; no first-login password prompt ---"
+    rm -f "${USER_HOME}/.firstlogin-passwd.sh"
+fi
 
 # ---------- 5. Homebrew ----------
 if [[ "$INSTALL_BREW" == "1" ]]; then
