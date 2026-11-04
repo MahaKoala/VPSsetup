@@ -247,7 +247,7 @@ sudo env VPS_USER=maha SSH_ID=mahakoala NONINTERACTIVE=1 \
   bash -c 'curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/main/vps-init.sh | bash'
 ```
 
-Crush uses the modern `crushrc` format and supports **Anthropic, OpenAI, OpenRouter, Kimi/Moonshot, Kimi Code, GLM (Z.ai/Zhipu), Grok (xAI), and DeepSeek**, with per-user secrets at runtime and separate profiles for MCPs and LSPs.
+Crush uses the modern `crushrc` format and supports **Anthropic, OpenAI, OpenRouter, Kimi/Moonshot, Kimi Code, GLM (Z.ai/Zhipu), Grok (xAI), and DeepSeek**, with per-user secrets at runtime and separate profiles for MCPs and LSPs. The **DeepSeek Super-Agent research prototype** is a separate, source-only, opt-in worker (`STAGE_DEEPSEEK_SUPERAGENT=1`).
 
 [**Explore the illustrated Crush setup and provider matrix →**](README_VibecodeCrush.md)
 
@@ -343,6 +343,7 @@ For deeper coverage of failure modes, recovery commands, and how to read `Verify
 | [`vps-harden.sh`](vps-harden.sh) | OpenSSH, UFW without reset, Fail2Ban, updates, sysctl and Tailscale installation/join; access policies are managed separately |
 | [`vps-tools.sh`](vps-tools.sh) | Optional full AI tool suite (Claude, OpenCode, Crush, Codex, tmuxai, Ollama) |
 | [`vps-vibecode-crush.sh`](vps-vibecode-crush.sh) | **Optional standalone Crush setup:** providers, MCP/LSP profiles and slash commands |
+| [`vps-deepseek-superagent.sh`](vps-deepseek-superagent.sh) | **Experimental, explicit opt-in:** stage the research prototype source; never run it automatically |
 | [`VerifyChecklist.sh`](VerifyChecklist.sh) | Post-install audit. `--quiet` for cron, `--report` to re-print last install tally |
 | [`vps-swap.sh`](vps-swap.sh) | RAM-aware swap setup, independent of cloud-init |
 | [`firstrun.sh`](firstrun.sh) | Compatibility launcher for the portable one-line installer |
