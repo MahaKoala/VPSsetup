@@ -106,7 +106,19 @@ The installer does not verify purchased quotas or charge your account. Use the c
 
 ### DeepSeek Super-Agent is different from DeepSeek API
 
-[DeepSeek's `dsh-superagent-prototype`](https://github.com/deepseek-ai/dsh-superagent-prototype) is a **research prototype**, not a `model` ID or a built-in Crush provider. Its own README states it is **not an official product and not production ready**. It is documented here as a separate experimental agent harness and **is not cloned, executed, or granted GitHub credentials** by the Crush installer. Review its trust boundaries and dedicated-user setup before exploring it on a disposable VM.
+[DeepSeek's `dsh-superagent-prototype`](https://github.com/deepseek-ai/dsh-superagent-prototype) is a **research prototype**, not a `model` ID or a built-in Crush provider. Its own README states it is **not an official product and not production ready**. It is documented here as a separate experimental agent harness and **is not cloned, executed, or granted GitHub credentials** by the Crush installer.
+
+An additional independent worker can **stage the source only** when explicitly selected:
+
+```bash
+# On an existing configured VPS (experimental; no agent launch)
+sudo /usr/local/sbin/vps-deepseek-superagent.sh
+
+# Or select during the interactive vps-init.sh wizard,
+# or set STAGE_DEEPSEEK_SUPERAGENT=1 in a noninteractive one-line install.
+```
+
+That worker clones the repository beneath `$VPS_USER/workspaces`, without running it, registering services, or storing credentials. `DEEPSEEK_SUPERAGENT_REF` lets you choose a reviewed tag/branch. Review its trust boundaries before exploring it on a disposable VM. Review its trust boundaries and dedicated-user setup before exploring it on a disposable VM.
 
 ---
 
