@@ -761,3 +761,34 @@ sudo /usr/local/sbin/VerifyChecklist.sh
 ```
 
 Each independently reads `/etc/vps/bootstrap.env` and does not depend on cloud-init.
+
+---
+
+## 10. `ERROR: SSH effective configuration differs from requested values`
+
+On Ubuntu/OpenSSH, `sshd -T` can normalize `PermitRootLogin prohibit-password` to its equivalent legacy spelling `without-password`. Earlier VPSsetup versions compared the literal text and could reject a secure configuration.
+
+The current hardening worker treats those two values as equivalent, **but it still rejects actual mismatches** in `PasswordAuthentication`, `PubkeyAuthentication`, and `PermitRootLogin`. On a mismatch it prints the requested and effective values and restores the previous project-managed SSH drop-in without applying the invalid configuration.
+
+Check the actual policy safely from the existing root console:
+
+```bash
+sudo sshd -T | grep -E '^(passwordauthentication|pubkeyauthentication|permitrootlogin|kbdinteractiveauthentication|allowusers) '
+sudo grep -RniE '^[[:space:]]*(PasswordAuthentication|PubkeyAuthentication|PermitRootLogin|Include|Match)' \
+  /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null
+sudo grep -E '^(ALLOW_PASSWORD_AUTH|PERMIT_ROOT_LOGIN|VPS_USER)=' /etc/vps/bootstrap.env
+```
+
+Do **not** disable the safety check or blindly delete cloud/provider SSH drop-ins. The corrected worker reports which setting conflicts. To repair just SSH hardening after reviewing the configuration, update the worker and run `sudo bash -n /usr/local/sbin/vps-harden.sh && sudo /usr/local/sbin/vps-harden.sh`. Keep the current console open until a second SSH login succeeds.
+
+### Failed hardening left `ssh.socket` masked
+
+Older versions switched off socket activation before verifying `sshd -T`. After a failed run, check **before rebooting**:
+
+```bash
+systemctl is-active ssh.service
+systemctl is-enabled ssh.service
+systemctl is-enabled ssh.socket
+```
+
+If `ssh.service` is not enabled, keep the root console open and run `sudo systemctl enable --now ssh.service`, then `sudo sshd -t`. Only reboot after checking that at least one SSH startup path is enabled and testing a separate login. Updated hardening defers the socket transition until SSH validation passes.

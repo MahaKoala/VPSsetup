@@ -157,13 +157,6 @@ if bool "$HARDEN_SSH"; then
     } > "$DROPIN"
     chmod 644 "$DROPIN"
 
-    # Ubuntu 24.04 ships ssh.socket socket-activated. Drop-in changes don't
-    # always apply on first restart unless we disable AND mask the socket and
-    # use the classic ssh.service. Masking prevents apt operations / package
-    # hooks from re-enabling it later.
-    systemctl disable --now ssh.socket 2>/dev/null || true
-    systemctl mask ssh.socket 2>/dev/null || true
-
     # /run/sshd must exist for sshd -t / sshd -T (privilege-separation dir).
     # /run is a tmpfs; the directory is normally materialised by ssh.service's
     # RuntimeDirectory=sshd at start time, but `sshd -t` runs before that so
@@ -184,16 +177,47 @@ if bool "$HARDEN_SSH"; then
         exit 1
     fi
     EFFECTIVE="$(sshd -T)"
-    # Syntax checks alone do not catch overridden values in other drop-ins.
-    if ! grep -qx "passwordauthentication $ALLOW_PASSWORD_AUTH" <<< "$EFFECTIVE" ||
-       ! grep -qx "pubkeyauthentication yes" <<< "$EFFECTIVE" ||
-       ! grep -qx "permitrootlogin $PERMIT_ROOT_LOGIN" <<< "$EFFECTIVE"; then
+    # sshd -T can canonicalize the deprecated alias "without-password".
+    # OpenSSH treats it exactly like "prohibit-password". Compare policy,
+    # rather than requiring a byte-for-byte match of equivalent spellings.
+    effective_value() {
+        awk -v key="$1" '$1 == key {print $2; exit}' <<< "$EFFECTIVE"
+    }
+    canonical_root_login() {
+        case "$1" in
+            prohibit-password|without-password) printf '%s' prohibit-password ;;
+            *) printf '%s' "$1" ;;
+        esac
+    }
+
+    effective_password="$(effective_value passwordauthentication)"
+    effective_pubkey="$(effective_value pubkeyauthentication)"
+    effective_root="$(effective_value permitrootlogin)"
+
+    if [[ "$effective_password" != "$ALLOW_PASSWORD_AUTH" ||
+          "$effective_pubkey" != yes ||
+          "$(canonical_root_login "$effective_root")" != "$(canonical_root_login "$PERMIT_ROOT_LOGIN")" ]]; then
         echo "ERROR: SSH effective configuration differs from requested values"
-        [[ -f "${DROPIN}.bak" ]] && mv "${DROPIN}.bak" "$DROPIN" || rm -f "$DROPIN"
+        echo "  PasswordAuthentication: expected=$ALLOW_PASSWORD_AUTH actual=${effective_password:-<unset>}"
+        echo "  PubkeyAuthentication:   expected=yes actual=${effective_pubkey:-<unset>}"
+        echo "  PermitRootLogin:        expected=$PERMIT_ROOT_LOGIN actual=${effective_root:-<unset>}"
+        echo "  Inspect: sshd -T | grep -E '^(passwordauthentication|pubkeyauthentication|permitrootlogin) '"
+        echo "  Inspect: grep -RniE '^[[:space:]]*(PasswordAuthentication|PubkeyAuthentication|PermitRootLogin)' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/"
+        if [[ -f "${DROPIN}.bak" ]]; then
+            mv "${DROPIN}.bak" "$DROPIN"
+        else
+            rm -f "$DROPIN"
+        fi
         (( legacy_moved )) && mv "$LEGACY.migrated" "$LEGACY"
         exit 1
     fi
     rm -f "${DROPIN}.bak"
+
+    # Transition from socket activation only AFTER sshd -t and the
+    # effective-policy checks have passed. A failed validation must not mask
+    # ssh.socket and leave an otherwise healthy server without SSH on reboot.
+    systemctl disable --now ssh.socket 2>/dev/null || true
+    systemctl mask ssh.socket 2>/dev/null || true
 
     systemctl enable ssh.service 2>/dev/null || true
 
