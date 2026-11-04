@@ -51,7 +51,7 @@ The three worker scripts run sequentially and idempotently. Each step is indepen
 - [Verify the result](#-verify-the-result)
 - [Connect with your real user](#-connect-with-your-real-user)
 - [Lock SSH to the tailnet](#-lock-ssh-to-the-tailnet)
-- [First-login password prompt](#-first-login-password-prompt)
+- [SSH-key-only initial login](#-ssh-key-only-initial-login)
 - [Claude Code statusline](#-claude-code-statusline)
 - [Safety guarantees](#-safety-guarantees)
 - [Re-running & idempotency](#-re-running--idempotency)
@@ -318,7 +318,8 @@ For deeper coverage of failure modes, recovery commands, and how to read `Verify
 | [`vps-harden.sh`](vps-harden.sh) | OpenSSH, UFW without reset, Fail2Ban, updates, sysctl and Tailscale installation/join; access policies are managed separately |
 | [`vps-tools.sh`](vps-tools.sh) | Claude Code + custom statusline, opencode, crush, codex, tmuxai, ollama, lazygit, system-wide `claude` symlink |
 | [`VerifyChecklist.sh`](VerifyChecklist.sh) | Post-install audit. `--quiet` for cron, `--report` to re-print last install tally |
-| [`vps-swap.sh`](vps-swap.sh) | RAM-aware swap setup, independent of cloud-init |\n| [`firstrun.sh`](firstrun.sh) | Compatibility launcher for the portable one-line installer |
+| [`vps-swap.sh`](vps-swap.sh) | RAM-aware swap setup, independent of cloud-init |
+| [`firstrun.sh`](firstrun.sh) | Compatibility launcher for the portable one-line installer |
 | [`vps-init.sh`](vps-init.sh) | Small provider-neutral installer: saves config, downloads the standalone workers and runs them |
 
 ### Helper scripts
@@ -379,7 +380,7 @@ These are points worth being explicit about — non-obvious choices and *why*.
 
 - **Username collision:** explicitly refuse `root`, `linuxbrew`, or any existing system user with UID < 1000, to avoid clobbering the Linuxbrew install user.
 - **Hostname generation:** prefer Hetzner metadata `instance-id` when available (deterministic, traceable), fall back to `/etc/machine-id`, then to random bytes. Format: `<prefix>-<role>-<id>` so role is encoded in the device name.
-- **First-login password hook.** `useradd -m` leaves the password locked. A `~/.firstlogin-passwd.sh` hook (sourced from `~/.vps-shell.sh`) prompts the user to set a password on first interactive shell, self-disables on success. Reliable across `ssh`, `su`, `su -`, and console login — independent of PAM. Full notes: [README_FirstLoginPassword.md](README_FirstLoginPassword.md).
+- **Optional first-login password hook.** New users have locked passwords and no hook by default. Only `FIRST_LOGIN_PASSWORD_PROMPT=1` creates the `~/.firstlogin-passwd.sh` hook to set a password on first interactive shell, self-disables on success. Reliable across `ssh`, `su`, `su -`, and console login — independent of PAM. Full notes: [README_FirstLoginPassword.md](README_FirstLoginPassword.md).
 - **`~/.vps-shell.sh` sentinel + auto-resource loader.** All volatile shell tweaks live in this one file, regenerated on every bootstrap run — old alias text is replaced, never appended next to. The loader in `~/.bashrc` (between `# >>> vps-shell-loader >>>` markers) re-sources it via `PROMPT_COMMAND` when its mtime changes, so existing shells pick up updates without `exec bash`. One-shot init (`starship init bash`, `zoxide init bash`) is guarded by `VPS_SHELL_ONESHOT_DONE` so it doesn't double-fire.
 
 ### Homebrew & user-space tooling
@@ -427,7 +428,7 @@ These are deliberately *not* automated in the scripts above because they require
 | [README_SampleExperience.md](README_SampleExperience.md) | Walkthrough of every interactive `vps-init.sh` prompt with expected output. Read alongside Quickstart on first install |
 | [README_Troubleshooting.md](README_Troubleshooting.md) | Deep-dive failure modes, recovery commands, expected `VerifyChecklist.sh` output |
 | [README_VPSscripts.md](README_VPSscripts.md) | Per-script overview of `vps-bootstrap.sh` / `vps-harden.sh` / `vps-tools.sh` and design constraints |
-| [README_SingleFileVPSinit.md](README_SingleFileVPSinit.md) | Full env-var reference for `vps-init.sh`; detail on why it ships as a single self-contained file |
+| [README_SingleFileVPSinit.md](README_SingleFileVPSinit.md) | One-line installation and standalone worker usage |
 | [README_SSHIDscript.md](README_SSHIDscript.md) | `addnew-sshid-key.sh` / `addupdate-sshid-key.sh` — adding sshid.io keys post-bootstrap |
 | [README_FirstLoginPassword.md](README_FirstLoginPassword.md) | First-login password prompt hook — design and customization |
 | [CustomConfigs/README.md](CustomConfigs/README.md) | Claude Code statusline bundle — install script, customization, deps |
