@@ -48,6 +48,7 @@ The three worker scripts run sequentially and idempotently. Each step is indepen
   - [Path B — Manual / split files](#path-b--manual--split-files)
   - [Path C — Cloud-init providers](#path-c--cloud-init-providers)
   - [End-of-install report](#end-of-install-report-path-a-only)
+- [AnchorGarden VPS security](#️-anchorgarden--evidence-based-vps-security)
 - [Verify the result](#-verify-the-result)
 - [Connect with your real user](#-connect-with-your-real-user)
 - [Lock SSH to the tailnet](#-lock-ssh-to-the-tailnet)
@@ -155,6 +156,26 @@ sudo tail -n 100 /var/log/vps-bootstrap.log
 ```
 
 `VerifyChecklist.sh` reports separately on swap, SSH-key validity, password policy, SSH, UFW, Fail2Ban, Tailscale and optional developer tools. Read warnings carefully; a successful script exit is not proof that a client can actually connect through its private key.
+
+---
+
+## 🛡️ AnchorGarden — evidence-based VPS security
+
+> **New optional security initiative:** Review emerging Linux vulnerabilities, including those discovered with AI assistance, without running exploit payloads or automatically changing server access.
+
+**First advisory:** [CVE-2026-123158 (*SSHole)](docs/security/CVE-2026-123158.md) — primarily affects certain musl-based, non-PAM OpenSSH deployments. Standard Ubuntu + key-only SSH is not in the documented vulnerable configuration.
+
+```bash
+# Read-only local check; independent of cloud-init and vps-init.sh
+curl -fsSL https://raw.githubusercontent.com/MahaKoala/VPSsetup/VPS-AnchorGarden/vps-anchor.sh \
+  -o /tmp/vps-anchor.sh
+bash -n /tmp/vps-anchor.sh
+sudo bash /tmp/vps-anchor.sh
+```
+
+The worker reports **PASS**, **REVIEW**, **HIGH**, or **INCOMPLETE**, without printing password hashes or changing authentication settings. Public SSH with **authorized keys only for existing Linux accounts** remains supported.
+
+[**AnchorGarden roadmap and acceptance criteria →**](docs/security/AnchorGarden.md) · [First advisory and recovery guide](docs/security/CVE-2026-123158.md)
 
 ---
 
@@ -449,6 +470,8 @@ These are deliberately *not* automated in the scripts above because they require
 ---
 
 ## 📚 Related documentation
+
+- [🛡️ AnchorGarden security initiative](docs/security/AnchorGarden.md) · [CVE-2026-123158 SSHole](docs/security/CVE-2026-123158.md)
 
 | Doc | What it covers |
 |---|---|
