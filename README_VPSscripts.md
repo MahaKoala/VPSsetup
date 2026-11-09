@@ -19,6 +19,7 @@ sudo /usr/local/sbin/vps-harden.sh
 sudo /usr/local/sbin/vps-tools.sh             # full legacy AI suite; optional
 sudo /usr/local/sbin/vps-vibecode-crush.sh   # standalone Crush setup; optional
 sudo /usr/local/sbin/VerifyChecklist.sh
+sudo bash vps-anchor.sh                    # optional, read-only security assessment
 ```
 
 | Worker | Responsibility |
@@ -30,6 +31,7 @@ sudo /usr/local/sbin/VerifyChecklist.sh
 | `vps-vibecode-crush.sh` | Optional Crush provider profiles, MCP/LSP setup, and slash commands; `INSTALL_VIBECODE_CRUSH=1` |
 | `vps-deepseek-superagent.sh` | Optional research source staging only; `STAGE_DEEPSEEK_SUPERAGENT=1`, never runs it |
 | `VerifyChecklist.sh` | Validates keys, SSH, password policy, swap, UFW, services, Tailscale and optional tooling |
+| `vps-anchor.sh` | **Optional, read-only** exposure assessment for CVE-2026-123158 and SSH key-only policy. Requires neither cloud-init nor vps-init.sh. |
 
 Each worker reads the saved `/etc/vps/bootstrap.env`, and **none requires cloud-init**. For use on a completely fresh provider, generate/edit this config and download the necessary worker, or use the one-liner to do it.
 
@@ -65,3 +67,4 @@ All defaults are defined in [`bootstrap.env`](bootstrap.env). Particularly impor
 - [SSHID helper scripts](README_SSHIDscript.md)
 - [Password policy](README_FirstLoginPassword.md)
 - [Troubleshooting](README_Troubleshooting.md)
+- [AnchorGarden read-only security checks](docs/security/AnchorGarden.md)
