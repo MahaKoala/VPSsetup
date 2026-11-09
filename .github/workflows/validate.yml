@@ -20,6 +20,8 @@ jobs:
         run: python3 tests/check_provisioning.py
       - name: Validate optional Crush and DeepSeek workers
         run: python3 tests/check_vibecode_crush.py
+      - name: AnchorGarden read-only audit regression tests
+        run: python3 tests/check_anchor.py
       - name: Shellcheck (error-level diagnostics)
         run: shellcheck --severity=error ./*.sh
       - name: Validate cloud-init schema
