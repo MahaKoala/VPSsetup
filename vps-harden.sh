@@ -191,14 +191,20 @@ if bool "$HARDEN_SSH"; then
     }
 
     effective_password="$(effective_value passwordauthentication)"
+    effective_kbd="$(effective_value kbdinteractiveauthentication)"
+    effective_empty="$(effective_value permitemptypasswords)"
     effective_pubkey="$(effective_value pubkeyauthentication)"
     effective_root="$(effective_value permitrootlogin)"
 
     if [[ "$effective_password" != "$ALLOW_PASSWORD_AUTH" ||
+          "$effective_kbd" != no ||
+          "$effective_empty" != no ||
           "$effective_pubkey" != yes ||
           "$(canonical_root_login "$effective_root")" != "$(canonical_root_login "$PERMIT_ROOT_LOGIN")" ]]; then
         echo "ERROR: SSH effective configuration differs from requested values"
         echo "  PasswordAuthentication: expected=$ALLOW_PASSWORD_AUTH actual=${effective_password:-<unset>}"
+        echo "  KbdInteractiveAuthentication: expected=no actual=${effective_kbd:-<unset>}"
+        echo "  PermitEmptyPasswords: expected=no actual=${effective_empty:-<unset>}"
         echo "  PubkeyAuthentication:   expected=yes actual=${effective_pubkey:-<unset>}"
         echo "  PermitRootLogin:        expected=$PERMIT_ROOT_LOGIN actual=${effective_root:-<unset>}"
         echo "  Inspect: sshd -T | grep -E '^(passwordauthentication|pubkeyauthentication|permitrootlogin) '"
