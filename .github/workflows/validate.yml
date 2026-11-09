@@ -2,7 +2,7 @@ name: Validate VPSsetup
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, VPS-AnchorGarden]
 
 jobs:
   validate:
