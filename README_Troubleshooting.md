@@ -792,3 +792,21 @@ systemctl is-enabled ssh.socket
 ```
 
 If `ssh.service` is not enabled, keep the root console open and run `sudo systemctl enable --now ssh.service`, then `sudo sshd -t`. Only reboot after checking that at least one SSH startup path is enabled and testing a separate login. Updated hardening defers the socket transition until SSH validation passes.
+
+
+---
+
+## 11. AnchorGarden: CVE-2026-123158 and SSH key-only policy
+
+`vps-anchor.sh` is a read-only audit tool on the `VPS-AnchorGarden` branch. It does not try a password against any host or restart sshd.
+
+```bash
+sudo bash vps-anchor.sh
+sudo sshd -T | grep -E '^(passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication|usepam|permitrootlogin) '
+```
+
+**If the audit reports HIGH** because SSH passwords are enabled, do not assume the host is exploitable by *SSHole: validate libc, PAM, account state, and vendor patch level. Regardless, public SSH should remain key-only per project policy. Keep a working root console and an established second key-based session before adjusting SSH.
+
+**If it reports REVIEW**, examine `Match` blocks and the distribution's patched OpenSSH package; OpenSSH banners alone do not prove whether a backported patch is installed. For affected Alpine, install the vendor-fixed OpenSSH package and restart sshd through the provider console. Ubuntu/glibc builds are outside the documented musl bug's direct scope.
+
+See [AnchorGarden](docs/security/AnchorGarden.md) and [CVE-2026-123158 advisory](docs/security/CVE-2026-123158.md).
